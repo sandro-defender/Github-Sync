@@ -22,6 +22,9 @@ Requires **Home Assistant OS** or **Supervised**. Container and Core installs do
 - Upload: commit the folder to the mapped branch (creates the first commit if empty).
 - Download: write remote files onto disk. Extra local files are kept unless you opt into deletion.
 - Admin-only sidebar via Ingress. The token never reaches the browser.
+- Optional **automatic sync** per mapping (every 15 minutes, hourly, 6 hours, or daily): upload, download, or check-only.
+- Home Assistant persistent notification when a sync fails (or when check-only finds differences).
+- Check for updates can flag **conflicts** after you have synced at least once (local and remote both changed since last sync).
 
 ## Token permissions
 
@@ -55,7 +58,7 @@ Local development copy: put this repository’s `github_sync/` folder into `/add
 2. **Folder** — browse mounts and select a directory (for example `homeassistant/esphome` or `share/backups`).
 3. **Repository** — pick from the list or type `owner/repo`, set the branch, optionally a path *inside* the repo if the folder should not replace the entire tree.
 4. **Ignore rules** — edit upload vs download gitignore. Use presets. Uncheck files in the preview to exclude them.
-5. **Review** — optional commit message template with `{name}`, `{folder}`, `{repository}`, `{timestamp}`.
+5. **Review** — optional commit message template with `{name}`, `{folder}`, `{repository}`, `{timestamp}`. Enable **automatic sync** here if you want the app to run on an interval.
 6. **Save mapping**
 
 ### Buttons
@@ -96,6 +99,16 @@ New mappings exclude runtime and secrets from **upload**:
 | Log level | `trace`, `debug`, `info`, `warning`, `error` |
 
 GitHub credentials are configured in the app UI, not in the Supervisor options form.
+
+Automatic sync runs inside the app process (every 30 seconds it checks which mappings are due). The Home Assistant instance must keep the app **started**. Check-only auto-sync never writes; it notifies if files differ.
+
+## Development
+
+```
+PYTHONPATH=github_sync/app python3 -m unittest discover -s tests -v
+```
+
+See `ROADMAP.md` (handoff section) and `AGENTS.md` before changing code.
 
 ## Releases
 
