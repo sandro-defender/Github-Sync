@@ -20,7 +20,7 @@ Requires **Home Assistant OS** or **Supervised** (Apps are not available on Cont
 ## Handoff for the next agent (read this first)
 
 **Branch:** `arena/01a0c65d-github-sync` (do not switch branches).<br>
-**PR:** to be opened from this branch after validation.<br>
+**PR:** https://github.com/sandro-defender/Github-Sync/pull/2<br>
 **Version:** `0.2.0` in `github_sync/config.yaml`
 
 **What works today**
