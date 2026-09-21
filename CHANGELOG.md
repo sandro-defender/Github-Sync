@@ -4,6 +4,10 @@ All notable changes to GitHub Sync are documented here.
 
 ## [0.2.0] - 2026-09-22
 
+### Fixed
+
+- App linter: dropped obsolete `watchdog` and default-value keys from `config.yaml`. Health is a Docker `HEALTHCHECK` instead.
+
 ### Added
 
 - Per-mapping **automatic sync**: 15 minutes, hourly, 6 hours, or daily, with upload, download, or check-only. The scheduler wakes every 30 seconds inside the app process.
