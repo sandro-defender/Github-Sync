@@ -191,8 +191,9 @@ async function onAction(action, el) {
     return setState({
       confirm: {
         title: "Download from GitHub?",
-        body: "Remote files will overwrite matching local files. Extra local files are kept.",
+        body: "Remote files will overwrite matching local files. Extra local files are kept unless you choose the cleanup option below.",
         ok: "Download",
+        delete_extras: false,
         next: { type: "download", id },
       },
     });
@@ -360,10 +361,14 @@ async function confirmOk() {
       const result = await run("Downloading from GitHub…", () =>
         api("api/download", {
           method: "POST",
-          body: JSON.stringify({ mapping_id: id, delete_extras: false }),
+          body: JSON.stringify({
+            mapping_id: id,
+            delete_extras: Boolean(confirm.delete_extras),
+          }),
         })
       );
-      toast(`Downloaded ${result.downloaded} file(s)`);
+      const removed = result.deleted ? `, removed ${result.deleted} extra file(s)` : "";
+      toast(`Downloaded ${result.downloaded} file(s)${removed}`);
       await refresh();
     }
   } catch (_err) {
@@ -710,7 +715,10 @@ function render() {
   root.innerHTML = `
     <div class="wrap">
       <header class="app">
-        <h1>GitHub Sync</h1>
+        <div class="brand">
+          <img src="assets/icon.png" alt="" width="32" height="32">
+          <h1>GitHub Sync</h1>
+        </div>
         ${s.status?.username ? `<span class="user-chip">@${esc(s.status.username)}</span>` : ""}
         <button class="icon-btn" data-action="refresh" title="Refresh">↻</button>
       </header>
@@ -732,6 +740,7 @@ function render() {
           ? `<div class="overlay"><div class="dialog">
               <h2>${esc(s.confirm.title)}</h2>
               <p class="meta">${esc(s.confirm.body)}</p>
+              ${s.confirm.next?.type === "download" ? `<label class="confirm-option"><input type="checkbox" data-confirm-field="delete_extras" ${s.confirm.delete_extras ? "checked" : ""}> Delete local files that are not present in GitHub</label><p class="warning-text">This cannot be undone from the app. Ignored files are always protected.</p>` : ""}
               <div class="row">
                 <button class="btn ${s.confirm.danger ? "danger" : "ok"}" data-action="confirmOk">${esc(s.confirm.ok || "Confirm")}</button>
                 <button class="btn ghost" data-action="confirmCancel">Cancel</button>
@@ -766,6 +775,11 @@ document.addEventListener("change", (ev) => {
   }
   if (ev.target.dataset.fieldBool && state.editor) {
     state.editor[ev.target.dataset.fieldBool] = ev.target.checked;
+  }
+  if (ev.target.dataset.confirmField && state.confirm) {
+    state.confirm[ev.target.dataset.confirmField] = ev.target.checked;
+    render();
+    return;
   }
   const toggle = ev.target.dataset.togglePath;
   if (!toggle || !state.editor) return;

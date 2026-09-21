@@ -19,8 +19,8 @@ Requires **Home Assistant OS** or **Supervised** (Apps are not available on Cont
 
 ## Handoff for the next agent (read this first)
 
-**Branch:** `arena/01a0c62f-github-sync` (do not switch branches).  
-**PR:** https://github.com/sandro-defender/Github-Sync/pull/1  
+**Branch:** `arena/01a0c65d-github-sync` (do not switch branches).<br>
+**PR:** to be opened from this branch after validation.<br>
 **Version:** `0.2.0` in `github_sync/config.yaml`
 
 **What works today**
@@ -29,25 +29,26 @@ Requires **Home Assistant OS** or **Supervised** (Apps are not available on Cont
 - Ingress sidebar: token, mappings, file browser, gitignore editor, Check / Upload / Download.
 - Auto-sync per mapping (15 min / hourly / 6h / daily; upload, download, or check-only).
 - Persistent notification in Home Assistant when a sync fails (needs Supervisor `SUPERVISOR_TOKEN`; `homeassistant_api: true`).
-- Progress text polled by the UI during long jobs (`GET api/progress`).
+- Progress text polled by the UI during long jobs (`GET api/progress`), including completed upload blobs.
 - Three-way **conflict** flag on Check after at least one successful upload/download (uses stored `file_shas` in `/data`, stripped from the public API).
+- Download confirmation can opt into deleting local extras; it is off by default and respects download-ignore rules.
+- Refreshed App Store icon and repository banner; the icon is also used in the Ingress header and browser tab.
 - Unit tests: `PYTHONPATH=github_sync/app python3 -m unittest discover -s tests -v` (needs `aiohttp` for `test_sync_hash`).
 
 **Do not**
 
 - Add `custom_components/` or `hacs.json`. This is an App, not a HACS integration.
-- Switch git branches. Session is fixed to `arena/01a0c62f-github-sync`.
+- Switch git branches. Session is fixed to `arena/01a0c65d-github-sync`.
 - Put the GitHub token in API responses or in `config.yaml` options.
 - Use a `git` CLI; keep the Git Data API.
 
 **Next work (Phase 9)**
 
 1. Dry-run mode that never writes.
-2. Progress per-blob (not just stage text).
-3. Publish multi-arch images and set `image:` in `config.yaml` so Supervisor does not local-build.
-4. Cap or prune `file_shas` snapshots if `/data/github_sync.json` grows large.
-5. Translations beyond English for Supervisor options.
-6. Optional `delete_extras` checkbox in the Download confirm dialog (API already supports it).
+2. Publish multi-arch images and set `image:` in `config.yaml` so Supervisor does not local-build.
+3. Cap or prune `file_shas` snapshots if `/data/github_sync.json` grows large.
+4. Translations beyond English for Supervisor options.
+5. Submit to the community App store when stable.
 
 **Local run**
 
@@ -139,6 +140,7 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 - [x] Check / Upload / Download with confirmation
 - [x] Relative URLs so Ingress path prefix works
 - [x] Narrow / mobile layout
+- [x] App icon in the Ingress header and browser tab
 
 ## Phase 8 — Scheduling, notifications, progress
 
@@ -146,15 +148,17 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 - [x] Persistent notification on failure (and on check-only when files differ)
 - [x] Progress messages for long jobs (`/api/progress`)
 - [x] Three-way conflict flags using last-sync `file_shas`
+- [x] Per-blob upload progress while GitHub requests run concurrently
 
 ## Phase 9 — Polish
 
 - [x] unittest for ignore matcher, path sandbox, SHA, scheduler due-dates
 - [ ] Dry-run mode that never writes
-- [ ] Per-blob progress
+- [x] Per-blob upload progress
 - [ ] Publish multi-arch images (`image:` in config.yaml)
 - [ ] Submit to community app store when stable
-- [ ] Download UI checkbox for `delete_extras`
+- [x] Download UI checkbox for `delete_extras` (off by default; ignored files remain protected)
+- [x] Refresh App Store and repository branding assets
 
 ---
 
@@ -177,7 +181,7 @@ github_sync/
     scheduler.py                30s tick, per-mapping interval
     progress.py
     ha.py                       Supervisor persistent_notification
-    static/                     sidebar UI (relative URLs)
+    static/                     sidebar UI (relative URLs), browser icon
 tests/                          unittest, PYTHONPATH=github_sync/app
 ```
 

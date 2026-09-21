@@ -6,7 +6,7 @@ This repository is a **Home Assistant App** (formerly add-on), slug `github_sync
 
 ## Session / git
 
-- Stay on `arena/01a0c62f-github-sync`. Do not create or push other branches.
+- Stay on `arena/01a0c65d-github-sync`. Do not create or push other branches.
 - Push only to that branch. Open/update PR against `main`.
 - After every meaningful change: update README + CHANGELOG + ROADMAP, then **commit** with a detailed message (what, why, user impact). Never `wip` / `update`.
 

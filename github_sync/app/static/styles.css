@@ -37,7 +37,9 @@ header.app {
   background: #03a9f4; color: #fff;
   box-shadow: 0 2px 4px rgba(0,0,0,.25);
 }
-header.app h1 { font-size: 20px; font-weight: 400; margin: 0; flex: 1; }
+header.app h1 { font-size: 20px; font-weight: 400; margin: 0; }
+.brand { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+.brand img { width: 32px; height: 32px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.25); }
 .user-chip {
   font-size: 13px; padding: 4px 10px;
   border: 1px solid rgba(255,255,255,.35); border-radius: 999px;
@@ -132,6 +134,9 @@ textarea { min-height: 180px; font-family: ui-monospace, Menlo, monospace; font-
   background: var(--card); border-radius: 12px; padding: 20px; width: min(520px, 100%);
 }
 .dialog h2 { margin: 0 0 8px; font-size: 20px; font-weight: 500; }
+.confirm-option { display: flex; gap: 9px; align-items: flex-start; margin-top: 16px; font-size: 14px; line-height: 1.4; }
+.confirm-option input { margin-top: 2px; accent-color: var(--err); }
+.warning-text { color: var(--warn); font-size: 12px; margin: 6px 0 0 25px; }
 .toast {
   position: sticky; bottom: 12px; margin: 12px auto 0; width: fit-content;
   background: #323232; color: #fff; padding: 10px 16px; border-radius: 8px; font-size: 14px;

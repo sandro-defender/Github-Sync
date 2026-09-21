@@ -234,8 +234,20 @@ class SyncEngine:
         if not file_bytes:
             raise PathError("Nothing to upload (folder empty or fully ignored)")
 
-        self._progress(mapping, f"Uploading {len(file_bytes)} blob(s)…", total=len(file_bytes))
-        blob_shas = await self.client.create_blobs(owner, repo, file_bytes)
+        total_blobs = len(file_bytes)
+
+        def _blob_progress(current: int, total: int, path: str) -> None:
+            self._progress(
+                mapping,
+                f"Uploaded {current}/{total} blob(s)… {path}",
+                current=current,
+                total=total,
+            )
+
+        self._progress(mapping, f"Uploading {total_blobs} blob(s)…", total=total_blobs)
+        blob_shas = await self.client.create_blobs(
+            owner, repo, file_bytes, on_progress=_blob_progress
+        )
         self._progress(mapping, "Creating commit…")
         remote_blobs, commit_sha, _tree = await self._remote_blobs(mapping)
         prefix = repo_path.strip("/")
