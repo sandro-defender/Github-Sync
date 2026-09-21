@@ -132,7 +132,12 @@ class Store:
                     "ignore_download": mapping.get("ignore_download") or "",
                     "commit_message": mapping.get("commit_message")
                     or DEFAULT_COMMIT_MESSAGE,
-                    "last_sync": mapping.get("last_sync"),
+                    "last_sync": _public_last_sync(mapping.get("last_sync")),
+                    "auto_sync": bool(mapping.get("auto_sync")),
+                    "auto_interval_minutes": mapping.get("auto_interval_minutes") or 60,
+                    "auto_direction": mapping.get("auto_direction") or "upload",
+                    "last_auto_at": mapping.get("last_auto_at"),
+                    "last_error": mapping.get("last_error"),
                 }
             )
         return result
@@ -168,6 +173,17 @@ class Store:
             "commit_message": payload.get("commit_message")
             or (existing.get("commit_message") if existing else DEFAULT_COMMIT_MESSAGE),
             "last_sync": existing.get("last_sync") if existing else None,
+            "auto_sync": bool(payload.get("auto_sync", existing.get("auto_sync") if existing else False)),
+            "auto_interval_minutes": _interval(
+                payload.get("auto_interval_minutes"),
+                existing.get("auto_interval_minutes") if existing else 60,
+            ),
+            "auto_direction": _direction(
+                payload.get("auto_direction"),
+                existing.get("auto_direction") if existing else "upload",
+            ),
+            "last_auto_at": existing.get("last_auto_at") if existing else None,
+            "last_error": existing.get("last_error") if existing else None,
         }
         if existing:
             index = self.data["mappings"].index(existing)

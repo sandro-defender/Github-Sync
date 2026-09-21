@@ -61,9 +61,23 @@ def _local_rel_from_repo(repo_path: str, remote_path: str) -> str | None:
 
 
 class SyncEngine:
-    def __init__(self, client: GithubClient, roots: dict[str, Path]) -> None:
+    def __init__(
+        self,
+        client: GithubClient,
+        roots: dict[str, Path],
+        progress: Any | None = None,
+    ) -> None:
         self.client = client
         self.roots = roots
+        self.progress = progress
+
+    def _progress(self, mapping: dict[str, Any], message: str, **kwargs: Any) -> None:
+        if self.progress is None:
+            return
+        mapping_id = mapping.get("id") or ""
+        if not mapping_id:
+            return
+        self.progress.update(mapping_id, message=message, **kwargs)
 
     async def _local_files(self, mapping: dict[str, Any], direction: str):
         ignore_text = (
@@ -122,6 +136,7 @@ class SyncEngine:
         return await asyncio.to_thread(_hash_all)
 
     async def check(self, mapping: dict[str, Any]) -> dict[str, Any]:
+        self._progress(mapping, "Comparing local files with GitHub…")
         local_files, skipped = await self._local_files(mapping, "upload")
         local_shas = await self._hash_local(mapping, local_files)
         remote_blobs, commit_sha, _tree = await self._remote_blobs(mapping)
@@ -137,13 +152,24 @@ class SyncEngine:
         download_matcher = IgnoreMatcher(
             mapping.get("ignore_download"), extra=ALWAYS_IGNORE
         )
-        added, modified, extra_local = [], [], []
+        last_shas = ((mapping.get("last_sync") or {}).get("file_shas")) or {}
+        added, modified, extra_local, conflicts = [], [], [], []
         unchanged = 0
 
         for rel, sha in local_shas.items():
             remote_sha = remote_rel.get(rel)
             size = local_files.get(rel, {}).get("size", 0)
             item = {"path": rel, "local_sha": sha, "remote_sha": remote_sha, "size": size}
+            prev = last_shas.get(rel) if last_shas else None
+            if (
+                prev
+                and remote_sha
+                and prev != sha
+                and prev != remote_sha
+                and sha != remote_sha
+            ):
+                item["conflict"] = True
+                conflicts.append(item)
             if remote_sha is None:
                 added.append(item)
             elif remote_sha != sha:
@@ -160,6 +186,7 @@ class SyncEngine:
 
         return {
             "mapping_id": mapping["id"],
+            "at": _now_iso(),
             "repository": mapping["repository"],
             "branch": mapping.get("branch") or "main",
             "commit_sha": commit_sha,
@@ -178,14 +205,17 @@ class SyncEngine:
                 for item in skipped
                 if not item.get("is_dir")
             ][:200],
+            "conflicts": conflicts,
             "upload_count": len(added) + len(modified),
             "download_count": len(modified) + len(extra_local),
+            "file_shas": local_shas,
         }
 
     async def upload(self, mapping: dict[str, Any], message: str | None = None) -> dict[str, Any]:
         owner, repo = split_repo(mapping["repository"])
         branch = mapping.get("branch") or "main"
         repo_path = mapping.get("repo_path") or ""
+        self._progress(mapping, "Reading local files…")
         local_files, skipped_large = await self._local_files(mapping, "upload")
         folder = resolve_under_roots(self.roots, mapping["local_path"])
 
@@ -204,7 +234,9 @@ class SyncEngine:
         if not file_bytes:
             raise PathError("Nothing to upload (folder empty or fully ignored)")
 
+        self._progress(mapping, f"Uploading {len(file_bytes)} blob(s)…", total=len(file_bytes))
         blob_shas = await self.client.create_blobs(owner, repo, file_bytes)
+        self._progress(mapping, "Creating commit…")
         remote_blobs, commit_sha, _tree = await self._remote_blobs(mapping)
         prefix = repo_path.strip("/")
         new_tree: list[dict[str, str]] = []
@@ -245,6 +277,12 @@ class SyncEngine:
             "uploaded": len(blob_shas),
             "skipped": len(skipped_large),
             "at": _now_iso(),
+            "file_shas": {
+                rel: sha
+                for rel, sha in (
+                    await self._hash_local(mapping, local_files)
+                ).items()
+            },
         }
 
     async def download(
@@ -256,6 +294,7 @@ class SyncEngine:
         if not commit_sha:
             raise PathError("Remote branch is empty — nothing to download")
 
+        self._progress(mapping, "Downloading from GitHub…", total=len(remote_blobs))
         matcher = IgnoreMatcher(mapping.get("ignore_download"), extra=ALWAYS_IGNORE)
         folder = resolve_under_roots(self.roots, mapping["local_path"])
         local_files, _ = await self._local_files(mapping, "download")
@@ -277,6 +316,12 @@ class SyncEngine:
             resolve_under_roots(self.roots, f"{mapping['local_path']}/{rel}")
             await asyncio.to_thread(write_file_bytes, target, data)
             written += 1
+            self._progress(
+                mapping,
+                f"Downloaded {written} file(s)…",
+                current=written,
+                total=len(remote_blobs),
+            )
 
         deleted = 0
         if delete_extras:

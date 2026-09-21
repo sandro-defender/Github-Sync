@@ -1,6 +1,6 @@
 configuration:
   log_level:
     name: Log level
-    description: How verbose the GitHub Sync logs should be.
+    description: How verbose the GitHub Sync logs should be. Automatic folder sync is configured in the GitHub Sync sidebar, not here.
 network:
   8099/tcp: Ingress web interface (handled by Home Assistant).
