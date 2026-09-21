@@ -83,11 +83,22 @@ function toast(message) {
 
 async function run(label, fn) {
   setState({ busy: label, error: null });
+  const timer = setInterval(async () => {
+    try {
+      const snap = await api("api/progress");
+      const msg = snap.latest?.message;
+      if (msg) setState({ busy: msg });
+    } catch (_err) {
+      /* ignore poll errors */
+    }
+  }, 800);
   try {
     const result = await fn();
+    clearInterval(timer);
     setState({ busy: null });
     return result;
   } catch (err) {
+    clearInterval(timer);
     setState({ busy: null, error: err.message || String(err) });
     throw err;
   }
@@ -125,6 +136,9 @@ function blankEditor(existing) {
     ignore_upload: existing?.ignore_upload ?? defaults.ignore_upload ?? "",
     ignore_download: existing?.ignore_download ?? defaults.ignore_download ?? "",
     commit_message: existing?.commit_message || "",
+    auto_sync: Boolean(existing?.auto_sync),
+    auto_interval_minutes: existing?.auto_interval_minutes || 60,
+    auto_direction: existing?.auto_direction || "upload",
     step: 1,
   };
 }
@@ -297,6 +311,9 @@ async function save() {
           ignore_upload: editor.ignore_upload,
           ignore_download: editor.ignore_download,
           commit_message: editor.commit_message || undefined,
+          auto_sync: Boolean(editor.auto_sync),
+          auto_interval_minutes: Number(editor.auto_interval_minutes) || 60,
+          auto_direction: editor.auto_direction || "upload",
         }),
       })
     );
@@ -400,6 +417,8 @@ function renderList() {
           Folder: <code>${esc(m.local_path)}</code><br>
           Repo: <strong>${esc(m.repository)}</strong> · ${esc(m.branch)}${m.repo_path ? ` · ${esc(m.repo_path)}` : ""}<br>
           ${last ? `${esc(last.direction)} · ${esc(relTime(last.at))}` : "Never synced"}
+          ${m.auto_sync ? `<br>Auto: ${esc(m.auto_direction)} every ${esc(m.auto_interval_minutes)} min` : ""}
+          ${m.last_error ? `<br><span style="color:var(--err)">Last error: ${esc(m.last_error)}</span>` : ""}
         </div>
         <div class="row">
           <button class="btn ghost" data-action="check" data-id="${esc(m.id)}">Check for updates</button>
@@ -588,16 +607,33 @@ function renderStepReview(e) {
       <input type="text" data-field="commit_message" value="${esc(e.commit_message)}" placeholder="chore(ha): sync {name} from Home Assistant">
     </label>
     <p class="meta">Placeholders: {name} {folder} {repository} {timestamp}</p>
+    <label class="field"><input type="checkbox" data-field-bool="auto_sync" ${e.auto_sync ? "checked" : ""}> Enable automatic sync</label>
+    <label class="field">Interval
+      <select data-field="auto_interval_minutes">
+        ${[15, 60, 360, 1440].map((n) => `<option value="${n}" ${Number(e.auto_interval_minutes) === n ? "selected" : ""}>${n === 1440 ? "Daily" : n === 360 ? "Every 6 hours" : n === 60 ? "Hourly" : "Every 15 minutes"}</option>`).join("")}
+      </select>
+    </label>
+    <label class="field">Automatic action
+      <select data-field="auto_direction">
+        <option value="upload" ${e.auto_direction === "upload" ? "selected" : ""}>Upload</option>
+        <option value="download" ${e.auto_direction === "download" ? "selected" : ""}>Download</option>
+        <option value="check" ${e.auto_direction === "check" ? "selected" : ""}>Check only (notify if changes)</option>
+      </select>
+    </label>
   </div>`;
 }
 
 function renderDiff() {
   const d = state.diff;
   if (!d) return "";
+  const conflictPaths = new Set((d.conflicts || []).map((f) => f.path));
   const rows = [
     ...(d.added || []).map((f) => ({ ...f, kind: "add", label: "local only" })),
-    ...(d.modified || []).map((f) => ({ ...f, kind: "mod", label: "changed" })),
+    ...(d.modified || [])
+      .filter((f) => !conflictPaths.has(f.path))
+      .map((f) => ({ ...f, kind: "mod", label: "changed" })),
     ...(d.removed_locally || []).map((f) => ({ ...f, kind: "del", label: "remote only" })),
+    ...(d.conflicts || []).map((f) => ({ ...f, kind: "conflict", label: "conflict" })),
   ];
   return `<div class="card">
     <h3>Updates — ${esc(d.repository)} @ ${esc(d.branch)}</h3>
@@ -605,6 +641,7 @@ function renderDiff() {
       <div class="stat"><b>${d.upload_count}</b><span>would upload</span></div>
       <div class="stat"><b>${d.download_count}</b><span>would download</span></div>
       <div class="stat"><b>${d.unchanged}</b><span>unchanged</span></div>
+      <div class="stat"><b>${(d.conflicts || []).length}</b><span>conflicts</span></div>
     </div>
     ${d.empty_repo ? `<div class="banner">The remote branch is empty. Upload will create the first commit.</div>` : ""}
     <table class="diff">
@@ -724,6 +761,12 @@ document.addEventListener("input", (ev) => {
 });
 
 document.addEventListener("change", (ev) => {
+  if (ev.target.dataset.field && state.editor) {
+    state.editor[ev.target.dataset.field] = ev.target.value;
+  }
+  if (ev.target.dataset.fieldBool && state.editor) {
+    state.editor[ev.target.dataset.fieldBool] = ev.target.checked;
+  }
   const toggle = ev.target.dataset.togglePath;
   if (!toggle || !state.editor) return;
   const side = state.ignoreSide === "download" ? "ignore_download" : "ignore_upload";

@@ -156,4 +156,5 @@ table.diff th, table.diff td { text-align: left; padding: 6px 8px; border-bottom
 .tag.add { background: rgba(76,175,80,.2); color: var(--ok); }
 .tag.mod { background: rgba(255,152,0,.2); color: var(--warn); }
 .tag.del { background: rgba(244,67,54,.2); color: var(--err); }
+.tag.conflict { background: rgba(156,39,176,.2); color: #ce93d8; }
 code { font-size: 12px; }
