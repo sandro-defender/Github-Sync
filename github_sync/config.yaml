@@ -1,0 +1,38 @@
+name: GitHub Sync
+version: 0.1.0
+slug: github_sync
+description: Sync any Home Assistant folder with a GitHub repository. Each folder can target a different repo, with a sidebar UI, file browser, and smart gitignore editor.
+url: https://github.com/sandro-defender/Github-Sync
+arch:
+  - aarch64
+  - amd64
+init: false
+startup: application
+boot: auto
+ingress: true
+ingress_port: 8099
+ingress_stream: true
+panel_icon: mdi:github
+panel_title: GitHub Sync
+panel_admin: true
+homeassistant: 2024.12.0
+watchdog: http://[HOST]:[PORT:8099]/api/health
+map:
+  - type: homeassistant_config
+    read_only: false
+    path: /homeassistant
+  - type: share
+    read_only: false
+  - type: media
+    read_only: false
+  - type: backup
+    read_only: false
+  - type: addons
+    read_only: false
+  - type: all_addon_configs
+    read_only: false
+    path: /addon_configs
+options:
+  log_level: info
+schema:
+  log_level: list(trace|debug|info|warning|error)
