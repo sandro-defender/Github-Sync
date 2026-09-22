@@ -13,6 +13,7 @@
 ### Store readiness and release pipeline (current session)
 
 - **Publish workflow for pre-built multi-arch images** (`.github/workflows/publish.yml`): builds `ghcr.io/sandro-defender/{arch}-github_sync` with the Home Assistant builder actions on merges to `main`, releases and manual runs, then publishes the arch-independent manifest `ghcr.io/sandro-defender/github_sync` (`<version>` + `latest`). Users then download an image instead of building the app locally.
+- **Pull-request builds**: the publish workflow also runs for pull requests in build-only mode (`push: false`, manifest job skipped), so the Dockerfile and builder inputs are proven before merge. Both `amd64` and `aarch64` images build in ~1m35s each.
 - **Image verification helper** (`.github/scripts/check_published_images.sh`): checks the manifest and both arch images in GHCR and prints the exact `image:` line to add to `config.yaml`. `image:` stays unset until every check passes, because a missing manifest makes the Supervisor fail the install instead of falling back to a local build.
 - **Store artwork normalised** with the new `.github/scripts/optimize_store_assets.py`: `icon.png` 1536×1536 → 128×128 and `logo.png` 2880×1440 → 250×100 (2.29 MB → 39 KB combined), matching the presentation guidelines.
 - **Supervisor option translations** added for German, French, Spanish and Italian alongside English (`github_sync/translations/`).

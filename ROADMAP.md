@@ -22,7 +22,7 @@ Requires **Home Assistant OS** or **Supervised** (Apps are not available on Cont
 **Session branch:** `arena/01a0c6f9-github-sync` (stay on the branch provided by your Arena session).
 **Base version:** `0.3.2` in config.yaml, Dockerfile and version.py. Release automation bumps all three on merge.
 **Current work:** the sidebar UI was rewritten as a Preact component app (vendored ESM runtime, no build step, dark-first design system) and the store/release readiness work landed: a multi-arch image publish workflow, an image verification script, normalised store artwork, de/ fr/ es/ it option translations, an app-folder README and `docs/store-submission.md`.
-**Validation:** 81 Python tests and 11 frontend render tests passing (the frontend suite mounts the real app in Node via `tests/dom_stub.cjs`), plus an ESM syntax check over every shipped module. Still **not** verified on real hardware: Supervisor/device approval, a real app install, auto-sync denials, and the first GHCR publish run. The sandbox cannot reach ghcr.io, so the publish workflow has not been executed yet.
+**Validation:** the publish workflow built `amd64` and `aarch64` images successfully on the PR (no push); 81 Python tests and 11 frontend render tests passing (the frontend suite mounts the real app in Node via `tests/dom_stub.cjs`), plus an ESM syntax check over every shipped module. Still **not** verified on real hardware: Supervisor/device approval, a real app install, auto-sync denials, and the first GHCR publish run. The sandbox cannot reach ghcr.io, so the publish workflow has not been executed yet.
 
 **What works today**
 
@@ -192,7 +192,8 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 
 - [x] Dry-run mode that never writes.
 - [x] Multi-arch image pipeline: `.github/workflows/publish.yml` (Home Assistant builder actions, GHCR, `{arch}` images + multi-arch manifest) and `.github/scripts/check_published_images.sh` to gate enabling `image:` in `config.yaml`.
-- [ ] Run the publish workflow on `main`, verify the manifests and then set `image: "ghcr.io/sandro-defender/github_sync"` (needs the first successful GHCR run — cannot be done from this sandbox).
+- [x] Pipeline validated in CI: pull-request runs build `amd64` and `aarch64` images (~1m35s each) without pushing, so the Dockerfile and builder inputs are proven before merge (PR #7 checks).
+- [ ] Run the publish workflow on `main`, verify the manifests with `.github/scripts/check_published_images.sh 0.3.3` and then set `image: "ghcr.io/sandro-defender/github_sync"` (needs a merge to `main`; the sandbox cannot reach ghcr.io).
 - [x] Cap or prune `file_shas` snapshots if `/data/github_sync.json` grows large.
 - [x] Translations beyond English for Supervisor options (de, es, fr, it).
 - [x] Store preparation: artwork within the presentation guidelines (icon 128×128, logo 250×100), app-folder `README.md` intro, and `docs/store-submission.md` with the requirement checklist + device verification list.
@@ -210,6 +211,7 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 - [x] Render-based frontend test suite (`tests/test_frontend.cjs` + `tests/dom_stub.cjs`) and ESM syntax checks in CI.
 - [x] Multi-arch publish workflow and image verification script.
 - [x] Store artwork normalisation script and de/es/fr/it option translations.
+- [x] Pull-request build mode: both architectures build in CI without pushing.
 - [ ] First GHCR publish run + enable `image:` in `config.yaml`.
 - [ ] Device verification checklist on a real Home Assistant installation.
 

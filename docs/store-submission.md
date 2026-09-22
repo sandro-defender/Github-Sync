@@ -32,7 +32,7 @@ Guidelines: [App presentation](https://developers.home-assistant.io/docs/apps/pr
 | Ingress UI (no exposed port, no host network) | ✅ `ingress: true`, `ingress_stream: true` |
 | Least privilege (no `host_*`, no `devices`, no `privileged`) | ✅ |
 | CI (linter + Python + frontend tests) | ✅ `.github/workflows/validate.yml` |
-| **Pre-built multi-arch images** | ⏳ pipeline added in `.github/workflows/publish.yml` — first run still pending |
+| **Pre-built multi-arch images** | ⏳ pipeline builds `amd64` + `aarch64` successfully in pull-request runs; the first registry push happens on merge to `main` |
 | Verified on a real Home Assistant OS install | ⏳ see “Device verification” below |
 | AppArmor profile (optional, extra security point) | ⏳ not shipped — needs on-device validation first |
 
@@ -43,8 +43,10 @@ no `image:` key. That is slow and can fail on constrained hardware, so the
 preferred end state is a published multi-arch image.
 
 1. Merge the change that adds `.github/workflows/publish.yml`, then check that
-   the **Publish app image** run succeeded
-   (`gh run list --workflow=publish.yml`). It publishes:
+   the **Publish app image** run succeeded on `main`
+   (`gh run list --workflow=publish.yml`). Pull-request runs already prove both
+   architectures build, so this merge is what creates the registry entries. It
+   publishes:
    - `ghcr.io/sandro-defender/{arch}-github_sync:<version>` per architecture
    - `ghcr.io/sandro-defender/github_sync:<version>` + `:latest` (multi-arch manifest)
 2. Verify from a machine with registry access:
