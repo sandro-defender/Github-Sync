@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.5.1] - 2026-09-22
+
+- fix(release): publish and verify the app image before advertising a version
+
 ## [Unreleased]
 
 ### Publishing & release pipeline (current session)

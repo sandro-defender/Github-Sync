@@ -1,5 +1,5 @@
 name: GitHub Sync
-version: "0.5.0"
+version: "0.5.1"
 slug: github_sync
 description: Sync any Home Assistant folder with a GitHub repository. Each folder can target a different repo, with a sidebar UI, file browser, and smart gitignore editor.
 url: https://github.com/sandro-defender/Github-Sync
