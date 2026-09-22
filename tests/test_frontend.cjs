@@ -1,77 +1,494 @@
-// Lightweight frontend request/render regressions; no browser or npm deps needed.
-const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const vm = require('node:vm');
-const { test } = require('node:test');
+/**
+ * Frontend regression tests — no browser required.
+ *
+ * The panel is a Preact app; these tests render it into the DOM stub from
+ * `tests/dom_stub.cjs` with a fake `fetch`, so real templates, signals,
+ * event handlers and request payloads are exercised in plain Node.
+ */
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const { test, beforeEach } = require("node:test");
 
-function app() {
-  const root = { innerHTML: '' };
-  const tokenField = { value: '' };
-  const calls = [];
-  const context = vm.createContext({
-    document: { getElementById: id => id === 'github-token' ? tokenField : root, addEventListener() {} },
-    console,
-    navigator: { clipboard: { writeText: async () => {} } },
-    setInterval() { return 1; }, clearInterval() {}, setTimeout() { return 1; }, clearTimeout() {},
-    localStorage: { getItem() { return null; } },
-    fetch: async (url, opts = {}) => {
-      const body = opts.body ? JSON.parse(opts.body) : null;
-      calls.push({ url, body });
-      let data = {};
-      if (url === 'api/oauth/device/start') data = { flow_id: 'flow', user_code: 'CODE', verification_uri: 'https://github.com/login/device' };
-      if (url === 'api/download') data = { dry_run: true, direction: 'download', actions: [], create_count: 0, update_count: 0, delete_count: 0, unchanged: 1, skipped: 0 };
-      return { ok: true, text: async () => JSON.stringify(data) };
-    },
-  });
-  const source = fs.readFileSync('github_sync/app/static/app.js', 'utf8').replace(/refresh\(\);\s*$/, '');
-  vm.runInContext(source, context);
-  return { root, tokenField, calls, run: code => vm.runInContext(code, context) };
+const { createDom, installDom } = require("./dom_stub.cjs");
+
+const APP_DIR = path.join(__dirname, "..", "github_sync", "app", "static", "app");
+
+// Keep the process from hanging on toast (4s) and progress-poll (0.7s) timers,
+// while still letting the test's own zero-delay "flush" timers fire.
+for (const name of ["setTimeout", "setInterval"]) {
+  const real = globalThis[name];
+  globalThis[name] = (handler, delay, ...rest) => {
+    const timer = real(handler, delay, ...rest);
+    if ((Number(delay) || 0) >= 500) timer.unref?.();
+    return timer;
+  };
 }
 
-test('access dialog is explicit about app limits and freezes selected policy into start request', async () => {
-  const a = app();
-  a.run('openAuthSetup()');
-  assert.match(a.root.innerHTML, /NOT only to the repositories/);
-  assert.equal(a.run('state.authSetup.mode'), 'read');
-  a.run(`state.authSetup.repositories = 'owner/repo\\nowner/other'; state.authSetup.scope = 'repo'`);
-  await a.run('startDeviceAuth()');
-  assert.deepEqual(a.calls[0], { url: 'api/oauth/device/start', body: { scope: 'repo', access: { mode: 'read', repositories: ['owner/repo', 'owner/other'] } } });
-  assert.equal(a.run('state.authSetup'), null);
-  assert.match(a.root.innerHTML, /CODE/);
+const STATUS = {
+  configured: true,
+  username: "sandrod",
+  version: "0.3.2",
+  auth_method: "device",
+  requested_scope: "public_read",
+  access: { mode: "write", repositories: ["owner/ha-config"] },
+  roots: ["homeassistant", "share"],
+  defaults: { ignore_upload: ".storage/\n", ignore_download: "" },
+  mapping_count: 1,
+};
+
+const MAPPINGS = {
+  mappings: [
+    {
+      id: "m1",
+      name: "ESPHome",
+      local_path: "homeassistant/esphome",
+      repository: "owner/ha-esphome",
+      branch: "main",
+      repo_path: "",
+      ignore_upload: ".storage/\n",
+      ignore_download: "",
+      commit_message: "chore(ha): sync {name}",
+      auto_sync: true,
+      auto_interval_minutes: 60,
+      auto_direction: "upload",
+      last_sync: { direction: "upload", at: new Date().toISOString(), uploaded: 3 },
+      last_error: null,
+    },
+  ],
+};
+
+const UPDATES = { current_version: "0.3.2", latest_version: "0.4.0", update_available: true, source: "supervisor", checked_at: new Date().toISOString() };
+
+let dom;
+let calls;
+let modules;
+
+/** Fresh DOM + fake network for every test. */
+async function boot(options = {}) {
+  dom = createDom();
+  installDom(dom.document);
+  calls = [];
+
+  const status = options.status === undefined ? { ...STATUS } : options.status;
+  const responses = {
+    "api/status": status,
+    "api/mappings": options.mappings || MAPPINGS,
+    "api/presets": { presets: { ha_secrets: { label: "HA secrets", patterns: ".storage/\nsecrets.yaml" } } },
+    "api/updates": options.updates || {},
+    "api/progress": { jobs: [], latest: null },
+    ...(options.responses || {}),
+  };
+
+  globalThis.fetch = async (url, opts = {}) => {
+    const body = opts.body ? JSON.parse(opts.body) : null;
+    calls.push({ url, method: opts.method || "GET", body });
+    if (options.fail && url.startsWith(options.fail)) {
+      return { ok: false, status: 400, statusText: "Bad Request", text: async () => JSON.stringify({ detail: "Something broke" }) };
+    }
+    if (url === "api/token" && (opts.method || "GET") === "DELETE") {
+      status.configured = false;
+      status.username = null;
+    }
+    if (url === "api/token" && (opts.method || "GET") === "POST") {
+      status.configured = true;
+      status.username = "token-user";
+      status.auth_method = "token";
+    }
+    if (url === "api/mappings" && (opts.method || "GET") === "POST") {
+      responses["api/mappings"] = { mappings: [...((responses["api/mappings"] || {}).mappings || []), { ...body, id: "m2" }] };
+    }
+    const data = responses[url] ?? {};
+    return { ok: true, status: 200, statusText: "OK", text: async () => JSON.stringify(data) };
+  };
+
+  modules = {
+    deps: await import("../github_sync/app/static/app/deps.js"),
+    state: await import("../github_sync/app/static/app/state.js"),
+    actions: await import("../github_sync/app/static/app/actions.js"),
+    ui: await import("../github_sync/app/static/app/ui.js"),
+    app: await import("../github_sync/app/static/app/views/app.js"),
+  };
+
+  const { state } = modules;
+  state.status.value = status || { configured: false };
+  state.mappings.value = (options.mappings || MAPPINGS).mappings || [];
+  state.updates.value = options.updates || {};
+  state.view.value = "list";
+  state.editor.value = null;
+  state.confirm.value = null;
+  state.authSetup.value = null;
+  state.devicePopup.value = null;
+  state.busy.value = null;
+  state.error.value = null;
+  state.loading.value = false;
+  state.userMenuOpen.value = false;
+  state.mappingQuery.value = "";
+  state.diff.value = null;
+
+  const { html, render } = modules.deps;
+  render(html`<${modules.app.Shell} />`, dom.root);
+  await flush();
+  return dom.root;
+}
+
+/**
+ * Let Preact + Signals flush.
+ *
+ * Signals schedule their re-render in a microtask, so assertions have to yield
+ * once after changing state (this is also what keeps the real UI instant).
+ */
+async function flush() {
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+/** Wait for pending signal-driven re-renders. */
+const paint = flush;
+
+/** Find a button/clickable by its visible text. */
+function findButton(root, text) {
+  const nodes = [...root.querySelectorAll("button"), ...root.querySelectorAll("a")];
+  return nodes.find((node) => node.textContent.includes(text)) || null;
+}
+
+/** Set an input value and fire the `input` event Preact listens to. */
+function type(element, value) {
+  element.value = value;
+  element.dispatchEvent({ type: "input" });
+}
+
+beforeEach(() => {
+  /* boot() runs per test; nothing global to reset */
 });
 
-test('fine-grained token field clears and the secret never enters UI state', async () => {
-  const a = app();
-  a.run('openAuthSetup()');
-  a.tokenField.value = 'github_pat_test_only';
-  await a.run('connectToken()');
-  assert.equal(a.tokenField.value, '');
-  assert.equal(a.calls[0].body.token, 'github_pat_test_only');
-  assert.ok(!a.run('JSON.stringify(state)').includes('github_pat_test_only'));
+test("shell renders mappings, header and the update banner from the API", async () => {
+  const root = await boot({ updates: UPDATES });
+  await modules.actions.refresh();
+
+  const html = root.innerHTML;
+  assert.match(html, /ESPHome/);
+  assert.match(html, /owner\/ha-esphome/);
+  assert.match(html, /@sandrod/);
+  assert.match(html, /v0\.3\.2/);
+  assert.match(html, /Version 0\.4\.0 is available/);
+  assert.ok(findButton(root, "Update now"), "update banner offers the update");
+  assert.ok(findButton(root, "Upload"), "mapping card offers Upload");
+  assert.ok(calls.some((call) => call.url === "api/status"));
 });
 
-test('dry run sends strict booleans and never follows preview with a real operation', async () => {
-  const a = app();
-  a.run(`state.confirm = { next: { type: 'download', id: 'one' }, delete_extras: true }`);
-  await a.run('previewSync()');
-  assert.deepEqual(a.calls, [{ url: 'api/download', body: { mapping_id: 'one', dry_run: true, delete_extras: true } }]);
-  assert.match(a.root.innerHTML, /Dry run/);
-  assert.match(a.root.innerHTML, /No files, GitHub objects or sync history were changed/);
-  assert.equal(a.run('state.confirm'), null);
+test("access dialog states its limits and freezes the policy into the device flow", async () => {
+  const root = await boot();
+  await modules.actions.refresh();
+
+  modules.actions.openAuthSetup();
+  await paint();
+  assert.match(root.innerHTML, /App-side limits only/);
+  assert.match(root.innerHTML, /GitHub grants are broader than app limits/);
+
+  modules.state.authSetup.value = { editing: false, mode: "read", scope: "repo", repositories: "owner/repo\n  owner/other  " };
+  await paint();
+  await modules.actions.startDeviceAuth();
+
+  const start = calls.find((call) => call.url === "api/oauth/device/start");
+  assert.deepEqual(start.body, { scope: "repo", access: { mode: "read", repositories: ["owner/repo", "owner/other"] } });
+  assert.equal(modules.state.authSetup.value, null, "dialog closes once the flow starts");
 });
 
-test('update failures and fallback releases never claim a verified install', () => {
-  const a = app();
-  a.run(`state.updates = { error: 'Offline', latest_version: '9.9.9' }; state.view = 'settings'; render()`);
-  assert.match(a.root.innerHTML, /Could not verify updates/);
-  assert.ok(!a.root.innerHTML.includes('You have the latest version'));
-  a.run(`state.updates = { source: 'github', update_available: true, latest_version: '9.9.9' }; render()`);
-  assert.ok(!a.root.innerHTML.includes('data-action="updateNow"'));
+test("the fine-grained token is read once, cleared, and never kept in UI state", async () => {
+  await boot();
+  modules.actions.openAuthSetup();
+  await paint();
+
+  const field = dom.document.getElementById("github-token");
+  assert.ok(field, "token field is rendered");
+  field.value = "github_pat_test_only";
+  await modules.actions.connectToken();
+
+  assert.equal(field.value, "", "field is cleared after submitting");
+  const tokenCall = calls.find((call) => call.url === "api/token");
+  assert.equal(tokenCall.body.token, "github_pat_test_only");
+  const serialised = JSON.stringify({
+    authSetup: modules.state.authSetup.value,
+    error: modules.state.error.value,
+    status: modules.state.status.value,
+  });
+  assert.ok(!serialised.includes("github_pat_test_only"), "secret never reaches UI state");
 });
 
-test('dry-run filenames are HTML escaped', () => {
-  const a = app();
-  const html = a.run(`renderDryRun({ direction: 'upload', actions: [{ path: '<img src=x>', action: 'delete' }] })`);
-  assert.ok(!html.includes('<img src=x>'));
-  assert.match(html, /&lt;img src=x&gt;/);
+test("previews send strict dry-run booleans and never mutate anything", async () => {
+  const plan = {
+    dry_run: true,
+    direction: "download",
+    target: "local files",
+    repository: "owner/ha-esphome",
+    branch: "main",
+    actions: [{ path: "esphome/kitchen.yaml", action: "update" }],
+    create_count: 0,
+    update_count: 1,
+    delete_count: 0,
+    unchanged: 2,
+    skipped: 0,
+  };
+  const root = await boot({ responses: { "api/download": plan } });
+  await modules.actions.refresh();
+
+  const card = findButton(root, "Download");
+  card.click();
+  modules.state.confirm.value = { ...modules.state.confirm.value, delete_extras: true };
+  await modules.actions.previewSync();
+
+  const preview = calls.find((call) => call.url === "api/download");
+  assert.deepEqual(preview.body, { mapping_id: "m1", dry_run: true, delete_extras: true });
+  assert.equal(modules.state.confirm.value, null, "confirmation closes after previewing");
+  assert.equal(calls.filter((call) => call.url.startsWith("api/download")).length, 1, "no real download follows a preview");
+  assert.match(root.innerHTML, /Download preview/);
+  assert.match(root.innerHTML, /Nothing was written/);
+  assert.match(root.innerHTML, /would overwrite/);
+});
+
+test("confirmation dialogs only send the options the user picked", async () => {
+  await boot();
+  await modules.actions.refresh();
+
+  modules.actions.askDownload(modules.state.mappings.value[0]);
+  await paint();
+  assert.match(dom.root.innerHTML, /Delete local files that are not in GitHub/);
+  await modules.actions.confirmOk();
+  const download = calls.find((call) => call.url === "api/download");
+  assert.deepEqual(download.body, { mapping_id: "m1", delete_extras: false });
+
+  modules.actions.askUpload(modules.state.mappings.value[0]);
+  await modules.actions.confirmOk();
+  const upload = calls.find((call) => call.url === "api/upload");
+  assert.deepEqual(upload.body, { mapping_id: "m1" });
+});
+
+test("update failures and fallback releases never claim a verified install", async () => {
+  const root = await boot({ updates: { error: "Offline", latest_version: "9.9.9" } });
+  modules.state.view.value = "settings";
+  await paint();
+  assert.match(root.innerHTML, /Could not verify updates/);
+  assert.ok(!root.innerHTML.includes("You have the latest version"));
+
+  modules.state.updates.value = { source: "github", update_available: true, latest_version: "9.9.9", current_version: "0.3.2" };
+  await paint();
+  assert.ok(!root.innerHTML.includes("Update now"), "GitHub fallback never offers a one-click install");
+  assert.match(root.innerHTML, /update this app from its install source/i);
+});
+
+test("editor wizard walks folder → repo → rules → review and saves one mapping", async () => {
+  const root = await boot({
+    responses: {
+      "api/browse?path=": { path: "", parent: null, root: "Home Assistant", entries: [{ name: "homeassistant", path: "homeassistant", is_dir: true }] },
+      "api/repos": { repos: [{ full_name: "owner/ha-esphome", default_branch: "main", private: false, description: "ESPHome config" }] },
+      "api/branches?repository=owner%2Fha-esphome": { branches: ["main", "dev"] },
+      "api/preview_ignore": { direction: "upload", included: [{ path: "esphome/kitchen.yaml", size: 120 }], excluded: [], included_count: 1, excluded_count: 0, included_size: 120, truncated: false },
+    },
+  });
+  await modules.actions.refresh();
+
+  modules.actions.startNewMapping();
+  await paint();
+  assert.match(root.innerHTML, /Which Home Assistant folder/);
+
+  await modules.actions.browse("");
+  await paint();
+  assert.match(root.innerHTML, /homeassistant/);
+  modules.actions.pickFolder("homeassistant");
+  await paint();
+  assert.equal(modules.state.editor.value.local_path, "homeassistant");
+
+  modules.actions.gotoStep(2);
+  await modules.actions.loadRepos();
+  await paint();
+  assert.match(root.innerHTML, /owner\/ha-esphome/);
+  await modules.actions.pickRepo("owner/ha-esphome", "main");
+  await paint();
+  assert.deepEqual(modules.state.branches.value, ["main", "dev"]);
+
+  modules.actions.gotoStep(3);
+  await modules.actions.refreshIgnorePreview();
+  await paint();
+  assert.match(root.innerHTML, /esphome\/kitchen\.yaml/);
+
+  modules.actions.gotoStep(4);
+  await paint();
+  assert.match(root.innerHTML, /Enable automatic sync/);
+  await modules.actions.saveMapping();
+
+  const saved = calls.find((call) => call.url === "api/mappings" && call.method === "POST");
+  assert.equal(saved.body.local_path, "homeassistant");
+  assert.equal(saved.body.repository, "owner/ha-esphome");
+  assert.equal(saved.body.branch, "main");
+  assert.equal(modules.state.view.value, "list", "wizard returns to the list after saving");
+});
+
+test("failing API calls surface an error banner instead of failing silently", async () => {
+  const root = await boot({ fail: "api/check" });
+  await modules.actions.refresh();
+  await modules.actions.checkMapping("m1");
+  await paint();
+  assert.equal(modules.state.error.value, "Something broke");
+  assert.equal(modules.state.diff.value, null, "a failed check shows nothing to sync");
+  assert.match(root.innerHTML, /Something broke/);
+  assert.ok(modules.state.toasts.value.some((toast) => toast.tone === "error"));
+});
+
+test("rendered files are escaped and the app never injects raw HTML", async () => {
+  const hostile = "<img src=x onerror=alert(1)>";
+  const root = await boot({
+    mappings: {
+      mappings: [{ ...MAPPINGS.mappings[0], name: hostile, local_path: `homeassistant/${hostile}` }],
+    },
+  });
+  await modules.actions.refresh();
+  await paint();
+  assert.ok(!root.innerHTML.includes("<img src=x"), "markup stays text");
+  assert.match(root.innerHTML, /&lt;img src=x/);
+
+  const sources = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith(".js")) sources.push(full);
+    }
+  };
+  walk(APP_DIR);
+  for (const file of sources) {
+    const source = fs.readFileSync(file, "utf8");
+    assert.ok(!/innerHTML\s*=/.test(source), `${path.relative(APP_DIR, file)} must not assign innerHTML`);
+    assert.ok(!source.includes("dangerouslySetInnerHTML"), `${path.relative(APP_DIR, file)} must not use dangerouslySetInnerHTML`);
+    assert.ok(!source.includes("document.write"), `${path.relative(APP_DIR, file)} must not use document.write`);
+  }
+});
+
+test("logout clears account state and returns to the connect screen", async () => {
+  const root = await boot();
+  await modules.actions.refresh();
+  assert.match(root.innerHTML, /ESPHome/);
+  await modules.actions.logout();
+  assert.equal(calls.some((call) => call.url === "api/token" && call.method === "DELETE"), true);
+  assert.equal(modules.state.status.value.configured, false);
+  assert.equal(modules.state.repos.value, null, "account caches are dropped");
+  await paint();
+  assert.match(root.innerHTML, /Connect GitHub to get started/);
+});
+
+test("every view and overlay renders (settings, wizard steps, diff, dialogs, busy)", async () => {
+  const root = await boot({
+    responses: {
+      "api/browse?path=": { path: "", parent: null, root: "Home Assistant", entries: [{ name: "homeassistant", path: "homeassistant", is_dir: true, is_symlink: false }] },
+      "api/browse?path=homeassistant": { path: "homeassistant", parent: "", root: "Home Assistant", entries: [{ name: "esphome", path: "homeassistant/esphome", is_dir: true, is_symlink: true }] },
+      "api/repos": { repos: [{ full_name: "owner/ha-esphome", default_branch: "main", private: true, description: "ESPHome" }] },
+      "api/branches?repository=owner%2Fha-esphome": { branches: ["main"] },
+      "api/preview_ignore": { direction: "upload", included: [{ path: "a.yaml", size: 10 }], excluded: [{ path: "b.log", size: 4, pattern: "*.log" }], included_count: 1, excluded_count: 1, included_size: 10, truncated: true },
+    },
+  });
+  await modules.actions.refresh();
+
+  // Settings
+  modules.state.view.value = "settings";
+  await paint();
+  assert.match(root.innerHTML, /App updates/);
+  assert.match(root.innerHTML, /How sync works/);
+  assert.match(root.innerHTML, /owner\/ha-config/);
+
+  // Wizard, all four steps
+  modules.actions.startNewMapping();
+  await paint();
+  assert.match(root.innerHTML, /Which Home Assistant folder/);
+  await modules.actions.browse("homeassistant");
+  await paint();
+  assert.match(root.innerHTML, /link/);
+  for (const step of [2, 3, 4]) {
+    modules.actions.gotoStep(step);
+    await paint();
+  }
+  assert.match(root.innerHTML, /Enable automatic sync/);
+  assert.match(root.innerHTML, /Commit message template/);
+
+  // Check result and dry-run plan
+  modules.state.view.value = "diff";
+  modules.state.diff.value = {
+    mapping_id: "m1",
+    repository: "owner/ha-esphome",
+    branch: "main",
+    commit_sha: "abcdef1234567890",
+    empty_repo: true,
+    added: [{ path: "a.yaml", size: 10 }],
+    modified: [{ path: "b.yaml", size: 20 }],
+    removed_locally: [{ path: "c.yaml", size: 30 }],
+    conflicts: [{ path: "d.yaml", size: 40 }],
+    unchanged: 5,
+    skipped: [],
+    upload_count: 2,
+    download_count: 3,
+    file_shas: {},
+  };
+  await paint();
+  assert.match(root.innerHTML, /Update check/);
+  assert.match(root.innerHTML, /Conflicts detected/);
+  assert.match(root.innerHTML, /abcdef1/);
+
+  modules.state.diffFilter.value = "conflict";
+  await paint();
+  assert.match(root.innerHTML, /d\.yaml/);
+
+  modules.state.diff.value = {
+    dry_run: true,
+    direction: "upload",
+    target: "GitHub",
+    repository: "owner/ha-esphome",
+    branch: "main",
+    commit_sha: "abcdef1",
+    actions: [{ path: "x.yaml", action: "delete" }],
+    create_count: 0,
+    update_count: 0,
+    delete_count: 1,
+    unchanged: 0,
+    skipped: 2,
+  };
+  await paint();
+  assert.match(root.innerHTML, /Upload preview/);
+  assert.match(root.innerHTML, /would delete/);
+
+  // Dialogs and overlays
+  modules.state.devicePopup.value = {
+    flow_id: "f1",
+    user_code: "ABCD-1234",
+    verification_uri: "https://github.com/login/device",
+    expires_in: 900,
+    status: "pending",
+  };
+  await paint();
+  assert.match(root.innerHTML, /ABCD-1234/);
+  assert.match(root.innerHTML, /Waiting for approval/);
+
+  modules.state.devicePopup.value = { flow_id: "f1", status: "error", error: "Code expired" };
+  await paint();
+  assert.match(root.innerHTML, /Authorization failed/);
+
+  modules.state.devicePopup.value = null;
+  modules.state.busy.value = { label: "Uploading to GitHub…", message: "Sending blob 2 of 5", current: 2, total: 5 };
+  await paint();
+  assert.match(root.innerHTML, /Sending blob 2 of 5/);
+  assert.match(root.innerHTML, /2 \/ 5/);
+
+  modules.state.busy.value = null;
+  modules.state.updating.value = true;
+  await paint();
+  assert.match(root.innerHTML, /Updating GitHub Sync/);
+  modules.state.updating.value = false;
+
+  modules.state.toasts.value = [{ id: 99, message: "Mapping saved", tone: "success" }];
+  await paint();
+  assert.match(root.innerHTML, /Mapping saved/);
+  modules.state.toasts.value = [];
+
+  modules.state.error.value = "Boom";
+  await paint();
+  assert.match(root.innerHTML, /Something went wrong/);
+  modules.state.error.value = null;
 });

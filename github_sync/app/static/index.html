@@ -2,14 +2,27 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>GitHub Sync</title>
-    <meta name="theme-color" content="#101923" />
+    <meta name="theme-color" content="#0a0e17" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="description" content="Sync Home Assistant folders with GitHub repositories." />
     <link rel="icon" type="image/png" href="assets/icon.png" />
     <link rel="stylesheet" href="assets/styles.css" />
   </head>
   <body>
-    <div id="app"></div>
-    <script src="assets/app.js"></script>
+    <div id="app">
+      <div class="boot">
+        <span class="spinner" style="width: 28px; height: 28px"></span>
+        <p>Loading GitHub Sync…</p>
+      </div>
+    </div>
+    <noscript>
+      <p style="font-family: system-ui; color: #e6ebf5; text-align: center; padding: 48px">
+        GitHub Sync needs JavaScript enabled in Home Assistant.
+      </p>
+    </noscript>
+    <!-- ES modules, all paths relative so Ingress path prefixes keep working. -->
+    <script type="module" src="assets/app/main.js"></script>
   </body>
 </html>

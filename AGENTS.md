@@ -20,11 +20,15 @@ This repository is a **Home Assistant App** (formerly add-on), slug `github_sync
 ## Layout
 
 - App store metadata: `repository.yaml` at the repo root.
-- One app folder: `github_sync/` (Supervisor finds `config.yaml` here).
+- One app folder: `github_sync/` (Supervisor finds `config.yaml` here). Store artwork (`icon.png`, `logo.png`), option translations (`translations/`), `README.md` (store intro) and `DOCS.md` live here too.
 - Runtime: `github_sync/app/` (`main.py`, `store.py`, `sync.py`, `scheduler.py`, `ha.py`, `progress.py`, `paths.py`, `ignore.py`, `github_client.py`).
-- UI: `github_sync/app/static/` — **relative URLs only** (`api/status`, `assets/app.js`) because Ingress prefixes the path.
-- Tests: `tests/` with `PYTHONPATH=github_sync/app`.
-- Do **not** add `custom_components/` or `hacs.json`.
+- UI: `github_sync/app/static/` — Preact + signals + htm, **no build step**. `index.html` loads `assets/app/main.js`; modules live in `static/app/` (state, actions, api, format, ui, views) and the vendored runtime in `static/lib/`.
+  - **Relative URLs only** (`api/status`, `assets/app/…`, `./hooks.module.js`) because Ingress prefixes the path.
+  - Never assign `innerHTML` or use `dangerouslySetInnerHTML` — Preact escapes values; a test enforces this.
+  - Re-vendor the runtime with `.github/scripts/vendor_frontend.sh`; keep `static/lib/README.md` checksums in sync.
+- Tests: `tests/` with `PYTHONPATH=github_sync/app`; frontend tests run in Node with `tests/dom_stub.cjs`.
+- Store/publish docs: `docs/store-submission.md`, `.github/workflows/publish.yml`.
+- Do **not** add `custom_components/` or `hacs.json`. Do **not** add an npm/Node build pipeline — the panel must stay dependency-free at runtime and work offline.
 
 ## Versioning
 
@@ -41,14 +45,23 @@ This repository is a **Home Assistant App** (formerly add-on), slug `github_sync
 - Bind the server to `0.0.0.0:8099`.
 - Auto-sync: `scheduler.py` ticks every 30s; mapping fields `auto_sync`, `auto_interval_minutes` (min 5), `auto_direction`.
 - HA notifications: `ha.py` + `homeassistant_api: true` in `config.yaml`. No-op without `SUPERVISOR_TOKEN`.
+- Pre-built images: `.github/workflows/publish.yml` publishes `ghcr.io/sandro-defender/{arch}-github_sync` + the multi-arch manifest. Only set `image:` in `config.yaml` after `.github/scripts/check_published_images.sh <version>` passes for every line — a missing manifest makes installs fail instead of falling back to a local build.
+- Store artwork: normalise new art with `.github/scripts/optimize_store_assets.py` (icon 128×128, logo 250×100).
 
 ## How to run tests
 
 ```
 PYTHONPATH=github_sync/app python3 -m unittest discover -s tests -v
+node --test tests/test_frontend.cjs
 ```
 
-Install `tests/requirements.txt` first (runtime dependencies plus `httpx` for API regression tests).
+Install `tests/requirements.txt` first (runtime dependencies plus `httpx` for API regression tests). The frontend suite renders the real Preact app into `tests/dom_stub.cjs` with a fake `fetch` — add a test there for any UI change.
+
+Syntax-check a module (plain `node --check file.js` would parse ESM as CommonJS):
+
+```
+node --input-type=module --check - < github_sync/app/static/app/main.js
+```
 
 ## Do not
 

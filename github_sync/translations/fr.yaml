@@ -1,0 +1,6 @@
+configuration:
+  log_level:
+    name: Niveau de journalisation
+    description: Niveau de détail des journaux de GitHub Sync. La synchronisation automatique des dossiers se configure dans la barre latérale GitHub Sync, pas ici.
+network:
+  8099/tcp: Interface web Ingress (gérée par Home Assistant).

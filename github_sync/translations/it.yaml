@@ -1,0 +1,6 @@
+configuration:
+  log_level:
+    name: Livello di log
+    description: Quanto devono essere dettagliati i log di GitHub Sync. La sincronizzazione automatica delle cartelle si configura nella barra laterale di GitHub Sync, non qui.
+network:
+  8099/tcp: Interfaccia web Ingress (gestita da Home Assistant).

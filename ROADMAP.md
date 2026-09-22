@@ -19,27 +19,25 @@ Requires **Home Assistant OS** or **Supervised** (Apps are not available on Cont
 
 ## Handoff for the next agent (read this first)
 
-**Session branch:** `arena/01a0c6e1-github-sync` (stay on the branch provided by your Arena session).
-**Base version:** `0.3.1` in config.yaml, Dockerfile and version.py. Release automation bumps all three on merge.
-**Current work:** Supervisor 403 fix complete (correct URL + response envelope, fallback/recovery tests); configurable GitHub access complete; dry-run upload/download previews complete. All changes are committed on this session branch; release version remains managed by the merge workflow.
-**Validation:** 81 Python tests and 5 frontend request/render tests passing, plus JavaScript syntax check. Local Python environment: `.venv`. Full browser testing was blocked by a Chromium download TLS/network error; real HA Supervisor/device approval still needs integration verification.
+**Session branch:** `arena/01a0c6f9-github-sync` (stay on the branch provided by your Arena session).
+**Base version:** `0.3.2` in config.yaml, Dockerfile and version.py. Release automation bumps all three on merge.
+**Current work:** the sidebar UI was rewritten as a Preact component app (vendored ESM runtime, no build step, dark-first design system) and the store/release readiness work landed: a multi-arch image publish workflow, an image verification script, normalised store artwork, de/ fr/ es/ it option translations, an app-folder README and `docs/store-submission.md`.
+**Validation:** the publish workflow built `amd64` and `aarch64` images successfully on the PR (no push); 81 Python tests and 11 frontend render tests passing (the frontend suite mounts the real app in Node via `tests/dom_stub.cjs`), plus an ESM syntax check over every shipped module. Still **not** verified on real hardware: Supervisor/device approval, a real app install, auto-sync denials, and the first GHCR publish run. The sandbox cannot reach ghcr.io, so the publish workflow has not been executed yet.
 
 **What works today**
 
-- Install as a custom App store repository (`repository.yaml` + `github_sync/`).
+- Install as a custom App store repository (`repository.yaml` + `github_sync/`); store artwork is now 128×128 icon / 250×100 logo (39 KB total).
+- **Modern sidebar UI** (Preact 10 + signals + htm, vendored under `static/lib/`, wired in `static/app/deps.js`): mapping search, status dots, filter chips on diffs, toasts, skeletons, keyboard-accessible dialogs with a dry-run preview one click away, error boundary, module layout `state.js` / `actions.js` / `api.js` / `format.js` / `ui.js` / `views/`.
 - Ingress sidebar: token, mappings, file browser, gitignore editor, Check / Upload / Download.
-- **Configurable GitHub access:** choose read-only/read-write and selected repositories before device login; choose OAuth scope, or connect a fine-grained token for GitHub-enforced restrictions. OAuth allowlists are explicitly labelled app-enforced. Settings can narrow existing connections; policies cover manual/automatic operations and Git Data writes. Legacy connections remain unrestricted until configured. Logout clears local credentials, not GitHub grants.
-- Conflict snapshots (`last_sync.file_shas`) capped at 5000 entries with a `file_shas_truncated` flag (roadmap item done).
-- `store.py` mapping helpers fixed (`_public_last_sync`, `_interval`, `_direction` were missing and crashed saves/lists) and covered by `tests/test_store.py`.
-- Auto-sync per mapping (15 min / hourly / 6h / daily; upload, download, or check-only).
-- Persistent notification in Home Assistant when a sync fails (needs Supervisor `SUPERVISOR_TOKEN`; `homeassistant_api: true`).
+- **Configurable GitHub access:** choose read-only/read-write and selected repositories before device login; choose OAuth scope, or connect a fine-grained token for GitHub-enforced restrictions. Settings can narrow existing connections; policies cover manual/automatic operations and Git Data writes. Logout clears local credentials, not GitHub grants.
+- Conflict snapshots (`last_sync.file_shas`) capped at 5000 entries with a `file_shas_truncated` flag.
+- Auto-sync per mapping (15 min / hourly / 6h / daily; upload, download, or check-only) plus a persistent HA notification on failure.
 - Progress text polled by the UI during long jobs (`GET api/progress`), including completed upload blobs.
-- Three-way **conflict** flag on Check after at least one successful upload/download (uses stored `file_shas` in `/data`, stripped from the public API).
-- **Dry runs:** Upload/Download confirmation offers a read-only plan with create/overwrite/delete counts, no persisted metadata or notifications. Upload replacement includes remote deletions; download respects its separate ignore and cleanup settings. Failed/truncated/unsafe plans are rejected without writes.
-- Download confirmation can opt into deleting local extras; it is off by default and respects download-ignore rules.
-- Refreshed App Store icon and repository banner; the icon is also used in the Ingress header and browser tab.
-- **In-app update check + one-click update**: background check every 30 min (Supervisor `/addons/self/info`, GitHub-release fallback), header version chip, Settings → App updates card, green banner with **Update now**, HA persistent notification once per new version. The update itself is triggered through Home Assistant's update entity (`update/install`) because the Supervisor forbids an app updating itself.
-- Tests: install `tests/requirements.txt`; run `PYTHONPATH=github_sync/app python3 -m unittest discover -s tests -v` and `node --test tests/test_frontend.cjs`. CI runs both plus frontend syntax checks.
+- **Dry runs:** Upload/Download confirmation offers a read-only plan with create/overwrite/delete counts — no persisted metadata, no notifications, no writes.
+- **In-app update check + one-click update** through Home Assistant's update entity (the Supervisor forbids self-updates), with a version chip, Settings card, banner and HA notification.
+- **Publish pipeline** `.github/workflows/publish.yml` → `ghcr.io/sandro-defender/{arch}-github_sync` + multi-arch manifest; verify with `.github/scripts/check_published_images.sh <version>` before setting `image:`.
+- Supervisor option translations: en, de, es, fr, it.
+- Tests: `PYTHONPATH=github_sync/app python3 -m unittest discover -s tests -v` and `node --test tests/test_frontend.cjs`; CI runs both plus an ESM syntax check over `static/app/**` and `static/lib/**`.
 
 **Do not**
 
@@ -47,16 +45,16 @@ Requires **Home Assistant OS** or **Supervised** (Apps are not available on Cont
 - Switch git branches. Stay on the `arena/…` branch your session was given.
 - Put the GitHub token in API responses or in `config.yaml` options.
 - Use a `git` CLI; keep the Git Data API.
+- Add an npm/Node build step to the UI — the panel must stay offline-capable and dependency-free at runtime (vendor instead, see `static/lib/README.md`).
+- Set `image:` in `config.yaml` before the matching GHCR manifest exists.
 
-**Next work (Phase 11)**
+**Next work (Phase 11 → 12)**
 
-1. Verify these changes on a real HA OS/Supervised installation: update check, device authorization, GitHub fine-grained read-only/restricted repos, auto-sync denial and previews.
-2. Publish multi-arch images and set `image:` in `config.yaml` once the matching images exist so Supervisor does not local-build. Do not set `image:` before a working publish pipeline.
-3. Translations beyond English for Supervisor options.
-4. Further sync hardening: preserve Git tree modes/non-blob entries, improve large-blob handling and concurrency protections.
-5. Submit to the community App store when stable.
-
-Completed readiness items: no-write dry-run previews and capped `file_shas` snapshots (`MAX_FILE_SHAS = 5000`).
+1. Verify on a real HA OS/Supervised install: install/update flow, device authorization, fine-grained read-only repos, auto-sync denial, dry-run previews, and the panel on mobile + light theme (checklist in `docs/store-submission.md`).
+2. Run `.github/workflows/publish.yml` on `main`, confirm the GHCR manifests, then add `image: "ghcr.io/sandro-defender/github_sync"` in `config.yaml` and ship a patch release.
+3. Further sync hardening: preserve Git tree modes/non-blob entries, improve large-blob handling and concurrency protections.
+4. Optional extras: an AppArmor profile, German/French/Spanish/Italian *UI* strings, per-mapping sync history view.
+5. Submit to a curated app store once 1–2 are done (`docs/store-submission.md` has the practical path).
 
 **Local run**
 
@@ -72,7 +70,7 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 
 ## Current status
 
-**Active phase:** 11 (access controls, dry-run safety and release readiness)
+**Active phase:** 12 (store readiness and published images)
 
 | Phase | Name | Status |
 | --- | --- | --- |
@@ -88,6 +86,7 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 | 9 | Tests (started), store listing, multi-arch images | In progress |
 | 10 | App self-update (update check + one-click update) | Done |
 | 11 | Hardening & release readiness | In progress |
+| 12 | Modern UI, publishing & store readiness | In progress |
 
 ---
 
@@ -144,7 +143,7 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 - [x] Download (write files; extras kept unless requested)
 - [x] 50 MB file cap
 
-## Phase 7 — Sidebar UI
+## Phase 7 — Sidebar UI (rewritten in Phase 12)
 
 - [x] Ingress SPA: mappings, wizard, browser, ignore editor, settings
 - [x] Check / Upload / Download with confirmation
@@ -165,8 +164,8 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 - [x] unittest for ignore matcher, path sandbox, SHA, scheduler due-dates
 - [x] Dry-run mode that never writes
 - [x] Per-blob upload progress
-- [ ] Publish multi-arch images (`image:` in config.yaml)
-- [ ] Submit to community app store when stable
+- [x] Multi-arch image publish workflow + verification script (enabling `image:` waits for the first successful GHCR run)
+- [ ] Submit to community app store when stable (requirements, checklist and submission path documented in `docs/store-submission.md`)
 - [x] Download UI checkbox for `delete_extras` (off by default; ignored files remain protected)
 - [x] Refresh App Store and repository branding assets
 - [x] Cap `file_shas` conflict snapshots at 5000 entries with a truncation flag
@@ -192,10 +191,30 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 - [x] Configurable GitHub access, explicit OAuth limitations, optional fine-grained token, server-side enforcement and tests.
 
 - [x] Dry-run mode that never writes.
-- [ ] Publish multi-arch images and set `image:` in `config.yaml` so Supervisor does not local-build.
+- [x] Multi-arch image pipeline: `.github/workflows/publish.yml` (Home Assistant builder actions, GHCR, `{arch}` images + multi-arch manifest) and `.github/scripts/check_published_images.sh` to gate enabling `image:` in `config.yaml`.
+- [x] Pipeline validated in CI: pull-request runs build `amd64` and `aarch64` images (~1m35s each) without pushing, so the Dockerfile and builder inputs are proven before merge (PR #7 checks).
+- [x] Release ordering fixed: `release.yml` dispatches the image publish after the version bump, so image tags match the released version.
+- [ ] Run the publish workflow on `main`, verify the manifests with `.github/scripts/check_published_images.sh 0.3.3` and then set `image: "ghcr.io/sandro-defender/github_sync"` (needs a merge to `main`; the sandbox cannot reach ghcr.io).
 - [x] Cap or prune `file_shas` snapshots if `/data/github_sync.json` grows large.
-- [ ] Translations beyond English for Supervisor options.
+- [x] Translations beyond English for Supervisor options (de, es, fr, it).
+- [x] Store preparation: artwork within the presentation guidelines (icon 128×128, logo 250×100), app-folder `README.md` intro, and `docs/store-submission.md` with the requirement checklist + device verification list.
 - [ ] Submit to the community App store when stable.
+
+---
+
+## Phase 12 — Modern UI, publishing & store readiness
+
+- [x] Rewrite the Ingress panel as a component app (Preact + signals + htm) with no build step.
+- [x] Vendor the runtime as ESM (`static/lib/`, checksums + re-vendor script) so the panel works offline with no CDN.
+- [x] Split the frontend into state / actions / api / format / ui / views and delete the old single-file renderer.
+- [x] Design system: dark-first palette, gradient accents, glass surfaces, automatic light theme, reduced-motion support.
+- [x] UX: instant mapping search, diff filter chips, wizard stepper, toast stack, skeletons, busy progress bar, keyboard/aria-accessible dialogs, error boundary.
+- [x] Render-based frontend test suite (`tests/test_frontend.cjs` + `tests/dom_stub.cjs`) and ESM syntax checks in CI.
+- [x] Multi-arch publish workflow and image verification script.
+- [x] Store artwork normalisation script and de/es/fr/it option translations.
+- [x] Pull-request build mode: both architectures build in CI without pushing.
+- [ ] First GHCR publish run + enable `image:` in `config.yaml`.
+- [ ] Device verification checklist on a real Home Assistant installation.
 
 ---
 
@@ -222,8 +241,22 @@ github_sync/
     ha.py                       Supervisor persistent_notification
     updater.py                  app self-update check + update trigger
     version.py                  runtime version (synced with config.yaml)
-    static/                     sidebar UI (relative URLs), browser icon
+    static/
+      index.html                panel shell + ESM entry
+      styles.css                design system (dark first + light theme)
+      lib/                      vendored Preact/signals/htm (ESM, no CDN)
+      app/
+        main.js                 mount + first load
+        deps.js                 runtime wiring (html template + hooks + signals)
+        state.js                signals store
+        actions.js              API flows (sync, auth, updates)
+        api.js                  fetch wrapper with typed errors
+        format.js               display helpers
+        ui.js                   design-system primitives
+        views/                  shell, header, mappings, editor, diff, settings, dialogs
 tests/                          unittest, PYTHONPATH=github_sync/app
+                                + Node render tests (test_frontend.cjs, dom_stub.cjs)
+docs/store-submission.md       store requirements, image rollout, submission path
 ```
 
 **Data** (`/data/github_sync.json`)
@@ -245,4 +278,4 @@ tests/                          unittest, PYTHONPATH=github_sync/app
 2. Record every change in **CHANGELOG.md**.
 3. Keep **this roadmap** in sync (including the handoff section).
 4. Write detailed git commits (what, why, user impact).
-5. Merges to `main` create a GitHub Release.
+5. Merges to `main` create a GitHub Release and publish the multi-arch app image.
