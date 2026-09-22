@@ -4,6 +4,9 @@ name: Publish app image
 # Registry, following the Home Assistant app publishing guide
 # (https://developers.home-assistant.io/docs/apps/publishing).
 #
+# Pull requests run this workflow in build-only mode (no registry push) so a
+# broken Dockerfile is caught before merge.
+#
 # Until `image:` is set in github_sync/config.yaml, Supervisor builds the app
 # locally on the user's machine. Once the first publish below succeeded, set:
 #
@@ -15,6 +18,12 @@ name: Publish app image
 # Manifest image:   ghcr.io/sandro-defender/github_sync   (arch-independent)
 
 on:
+  # Pull requests build both architectures without pushing, so a broken
+  # Dockerfile or builder input is caught before it reaches main.
+  pull_request:
+    paths:
+      - "github_sync/**"
+      - ".github/workflows/publish.yml"
   push:
     branches: [main]
     paths:
@@ -38,6 +47,9 @@ concurrency:
 env:
   APP_DIR: github_sync
   BUILDER_VERSION: "2026.09.0"
+  # Pull requests only build (and never push) so a broken Dockerfile surfaces
+  # before the change reaches main.
+  PUBLISH: ${{ github.event_name != 'pull_request' }}
   # Owner is hard-coded on purpose: the image namespace must not change if the
   # repository is renamed or transferred.
   REGISTRY_PREFIX: ghcr.io/sandro-defender
@@ -114,7 +126,7 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Build and push image
+      - name: Build image (pushed on main, releases and manual runs)
         uses: home-assistant/builder/actions/build-image@2026.09.0
         with:
           arch: ${{ matrix.arch }}
@@ -129,12 +141,13 @@ jobs:
             io.hass.name=${{ needs.prepare.outputs.name }}
             io.hass.description=${{ needs.prepare.outputs.description }}
             ${{ needs.prepare.outputs.url && format('io.hass.url={0}', needs.prepare.outputs.url) || '' }}
-          push: true
+          push: ${{ env.PUBLISH }}
           version: ${{ needs.prepare.outputs.version }}
 
   manifest:
     name: Publish multi-arch manifest
     needs: [prepare, build]
+    if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubuntu-latest
     permissions:
       id-token: write
