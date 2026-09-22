@@ -57,7 +57,27 @@ const state = {
   oauthRedirectDraft: "",
   oauthScopeDraft: "repo",
   oauthDevice: null,
+  updates: {},
+  updating: false,
 };
+
+function updateDismissed(version) {
+  if (!version) return false;
+  try {
+    return localStorage.getItem("gsUpdateDismissed") === version;
+  } catch (_err) {
+    return false;
+  }
+}
+
+function dismissUpdate(version) {
+  try {
+    localStorage.setItem("gsUpdateDismissed", version);
+  } catch (_err) {
+    /* storage unavailable */
+  }
+  render();
+}
 
 async function api(path, options = {}) {
   const res = await fetch(path, {
@@ -112,16 +132,18 @@ async function run(label, fn) {
 async function refresh() {
   setState({ loading: true, error: null });
   try {
-    const [status, mappings, presets] = await Promise.all([
+    const [status, mappings, presets, updates] = await Promise.all([
       api("api/status"),
       api("api/mappings").catch(() => ({ mappings: [] })),
       api("api/presets").catch(() => ({ presets: {} })),
+      api("api/updates").catch(() => ({})),
     ]);
     setState({
       loading: false,
       status,
       mappings: mappings.mappings || [],
       presets: presets.presets || {},
+      updates,
       apiDraft: status.api_base || "https://api.github.com",
       oauthClientIdDraft: status.oauth?.client_id || "",
       oauthRedirectDraft: status.oauth?.redirect_uri || "",
@@ -231,6 +253,19 @@ async function onAction(action, el) {
   if (action === "confirmOk") return confirmOk();
   if (action === "confirmCancel") return setState({ confirm: null });
   if (action === "backDiff") return setState({ view: "list", diff: null });
+  if (action === "updateNow") {
+    const up = state.updates || {};
+    return setState({
+      confirm: {
+        title: "Update GitHub Sync now?",
+        body: `The app asks Home Assistant to install v${up.latest_version || "the new version"} and restart it. This sidebar briefly disconnects and comes back automatically.`,
+        ok: "Update now",
+        next: { type: "updateApp", from: up.current_version },
+      },
+    });
+  }
+  if (action === "dismissUpdate") return dismissUpdate((state.updates || {}).latest_version);
+  if (action === "checkUpdates") return checkUpdatesNow();
   if (action === "saveToken") return saveToken();
   if (action === "clearToken") return clearToken();
   if (action === "saveOAuth") return saveOAuthConfig();
@@ -356,6 +391,10 @@ async function confirmOk() {
   if (!confirm?.next) return;
   const { type, id } = confirm.next;
   try {
+    if (type === "updateApp") {
+      await updateAppNow(confirm.next.from);
+      return;
+    }
     if (type === "delete") {
       await run("Removing mapping…", () => api(`api/mappings/${id}`, { method: "DELETE" }));
       toast("Mapping removed");
@@ -386,6 +425,58 @@ async function confirmOk() {
     }
   } catch (_err) {
     /* stored */
+  }
+}
+
+async function checkUpdatesNow() {
+  try {
+    const updates = await run("Checking for app updates…", () =>
+      api("api/updates/check", { method: "POST" })
+    );
+    setState({ updates });
+    if (updates.update_available) toast(`Version ${updates.latest_version} is available`);
+    else toast("GitHub Sync is up to date");
+  } catch (_err) {
+    /* stored */
+  }
+}
+
+async function updateAppNow(from) {
+  setState({ updating: true, error: null });
+  try {
+    await api("api/updates/install", { method: "POST" });
+  } catch (err) {
+    // Home Assistant restarts this container as part of the update, so the
+    // response is often cut short. Keep waiting for the app to come back.
+    console.warn("Update request did not answer:", err.message || err);
+  }
+  const deadline = Date.now() + 180000;
+  while (Date.now() < deadline && state.updating) {
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    let data = null;
+    try {
+      data = await api("api/updates");
+    } catch (_err) {
+      continue; // app is restarting
+    }
+    if (data && data.current_version && data.current_version !== from) {
+      try {
+        localStorage.removeItem("gsUpdateDismissed");
+      } catch (_e) {
+        /* ignore */
+      }
+      setState({ updating: false, updates: data });
+      toast(`Updated to v${data.current_version}`);
+      refresh();
+      return;
+    }
+  }
+  if (state.updating) {
+    setState({
+      updating: false,
+      error:
+        "The app has not confirmed the new version yet. The update may still be running — close and reopen GitHub Sync in a moment.",
+    });
   }
 }
 
@@ -497,12 +588,25 @@ async function startWebAuth() {
   }
 }
 
+function renderUpdateBanner() {
+  const up = state.updates || {};
+  if (!up.update_available || !up.latest_version || state.updating) return "";
+  if (updateDismissed(up.latest_version)) return "";
+  return `<div class="banner update-banner">
+    <span>⬆️ <strong>New version v${esc(up.latest_version)}</strong> of GitHub Sync is available — you have v${esc(up.current_version || "unknown")}.</span>
+    <span class="row" style="margin-top:0">
+      <button class="btn ok" data-action="updateNow">Update now</button>
+      <button class="btn ghost" data-action="dismissUpdate">Later</button>
+    </span>
+  </div>`;
+}
+
 function renderList() {
   const s = state;
   if (s.loading) return `<p class="meta">Loading mappings…</p>`;
   if (!s.status?.configured) {
     return `<div class="empty">${SVG}<h2>Connect GitHub first</h2>
-      <p>Open Settings, paste a personal access token or use GitHub OAuth, then map folders.</p>
+      <p>Open Settings and connect GitHub — one-click device login, or paste a personal access token — then map folders.</p>
       <div class="row" style="justify-content:center"><button class="btn" data-action="tab" data-view="settings">Open settings</button></div></div>`;
   }
   const cards = (s.mappings || [])
@@ -772,8 +876,9 @@ function renderSettings() {
   const s = state.status || {};
   const oauth = s.oauth || {};
   const device = state.oauthDevice;
-  return `<div class="card">
-    <h3>GitHub connection</h3>
+  return `${renderOauthCard(oauth, device)}
+  <div class="card" style="margin-top:16px">
+    <h3>GitHub connection (personal access token)</h3>
     <div class="meta">
       ${s.configured ? `Signed in as <strong>@${esc(s.username)}</strong>` : "Not configured"}<br>
       API: ${esc(s.api_base || "https://api.github.com")}<br>
@@ -792,35 +897,6 @@ function renderSettings() {
     </div>
     <p class="meta" style="margin-top:12px">Fine-grained: Contents Read and write. Classic: <code>repo</code>. The token is stored in this app’s <code>/data</code> volume and is never sent back to the browser.</p>
   </div>
-  <div class="card oauth-card" style="margin-top:16px">
-    <h3>Automatic GitHub authorization</h3>
-    <p class="meta">Choose a login method below. Device authorization is recommended for Home Assistant because it does not need a callback URL. Create a GitHub OAuth App first, then enter its client details here.</p>
-    <div class="oauth-grid">
-      <label class="field">OAuth App client ID
-        <input type="text" data-field-global="oauthClientIdDraft" value="${esc(state.oauthClientIdDraft)}" placeholder="Iv1.…">
-      </label>
-      <label class="field">Client secret <span class="meta">${oauth.client_secret_configured ? "(saved)" : "(required for web login)"}</span>
-        <input type="password" data-field-global="oauthClientSecretDraft" value="${esc(state.oauthClientSecretDraft)}" placeholder="${oauth.client_secret_configured ? "••••••••  (leave blank to keep)" : "enter secret"}">
-      </label>
-    </div>
-    <label class="field">Permission scope
-      <select data-field-global="oauthScopeDraft">
-        <option value="repo" ${state.oauthScopeDraft === "repo" ? "selected" : ""}>Private and public repositories (repo)</option>
-        <option value="public_repo" ${state.oauthScopeDraft === "public_repo" ? "selected" : ""}>Public repositories only (public_repo)</option>
-      </select>
-    </label>
-    <label class="field">Web OAuth callback URL
-      <input type="text" data-field-global="oauthRedirectDraft" value="${esc(state.oauthRedirectDraft)}" placeholder="${esc(callbackUrl())}">
-    </label>
-    <div class="row">
-      <button class="btn ghost" data-action="useCallback">Use this app’s callback URL</button>
-      <button class="btn ghost" data-action="saveOAuth">Save authorization settings</button>
-      <button class="btn" data-action="deviceAuth">Authorize with device code</button>
-      <button class="btn" data-action="webAuth">Authorize in browser</button>
-    </div>
-    ${device ? `<div class="oauth-device"><strong>Waiting for GitHub approval</strong><p>Open <a href="${esc(device.verification_uri_complete || device.verification_uri)}" target="_blank" rel="noopener">${esc(device.verification_uri)}</a> and enter <code>${esc(device.user_code)}</code>.</p><p class="meta">This page checks automatically. The code expires in about ${Math.ceil(Number(device.expires_in || 900) / 60)} minutes.</p><button class="btn ghost" data-action="cancelDevice">Cancel</button></div>` : ""}
-    <p class="meta" style="margin-top:12px">The OAuth client secret, temporary authorization codes, and final access token stay on the app server and are never returned to the browser. Device login uses the selected scope; web login requires registering the exact callback URL in GitHub.</p>
-  </div>
   <div class="card" style="margin-top:16px">
     <h3>How sync works</h3>
     <div class="meta">
@@ -829,6 +905,81 @@ function renderSettings() {
       <strong>Download</strong> writes remote files (minus download-ignore) into the local folder.<br>
       Each mapping can target a different repository. File access is limited to folders Home Assistant mounted into this app.
     </div>
+  </div>
+  ${renderAppUpdates()}`;
+}
+
+function renderOauthCard(oauth, device) {
+  const builtin = oauth.builtin_device_flow !== false;
+  return `<div class="card oauth-card">
+    <h3>Connect with GitHub</h3>
+    <p class="meta">One-click login — no OAuth App to create and no token to paste. Press the button, open the GitHub link, and enter the short code. This uses the public GitHub CLI OAuth client, the same zero-config flow as the Home Assistant Version Control app.</p>
+    ${builtin ? "" : `<p class="meta" style="color:var(--warn)">GitHub Enterprise: the built-in client only works on github.com. Save your own OAuth App client ID under Advanced, or use a personal access token.</p>`}
+    <label class="field">Permission scope
+      <select data-field-global="oauthScopeDraft">
+        <option value="repo" ${state.oauthScopeDraft === "repo" ? "selected" : ""}>Private and public repositories (repo)</option>
+        <option value="public_repo" ${state.oauthScopeDraft === "public_repo" ? "selected" : ""}>Public repositories only (public_repo)</option>
+      </select>
+    </label>
+    <div class="row">
+      <button class="btn" data-action="deviceAuth">Connect with GitHub</button>
+    </div>
+    ${device ? `<div class="oauth-device"><strong>Waiting for GitHub approval</strong><p>Open <a href="${esc(device.verification_uri_complete || device.verification_uri)}" target="_blank" rel="noopener">${esc(device.verification_uri)}</a> and enter <code>${esc(device.user_code)}</code>.</p><p class="meta">This page checks automatically. The code expires in about ${Math.ceil(Number(device.expires_in || 900) / 60)} minutes.</p><button class="btn ghost" data-action="cancelDevice">Cancel</button></div>` : ""}
+    <details class="advanced">
+      <summary>Advanced: your own OAuth App (browser login, GitHub Enterprise)</summary>
+      <p class="meta" style="margin-top:10px">Optional. A custom client ID takes precedence over the built-in one for device login, and is required for browser login and GitHub Enterprise.</p>
+      <div class="oauth-grid">
+        <label class="field">OAuth App client ID
+          <input type="text" data-field-global="oauthClientIdDraft" value="${esc(state.oauthClientIdDraft)}" placeholder="Iv1.…">
+        </label>
+        <label class="field">Client secret <span class="meta">${oauth.client_secret_configured ? "(saved)" : "(required for web login)"}</span>
+          <input type="password" data-field-global="oauthClientSecretDraft" value="${esc(state.oauthClientSecretDraft)}" placeholder="${oauth.client_secret_configured ? "••••••••  (leave blank to keep)" : "enter secret"}">
+        </label>
+      </div>
+      <label class="field">Web OAuth callback URL
+        <input type="text" data-field-global="oauthRedirectDraft" value="${esc(state.oauthRedirectDraft)}" placeholder="${esc(callbackUrl())}">
+      </label>
+      <div class="row">
+        <button class="btn ghost" data-action="useCallback">Use this app’s callback URL</button>
+        <button class="btn ghost" data-action="saveOAuth">Save authorization settings</button>
+        <button class="btn" data-action="webAuth">Authorize in browser</button>
+      </div>
+      <p class="meta" style="margin-top:12px">The OAuth client secret, temporary authorization codes, and final access token stay on the app server and are never returned to the browser. Browser login requires registering the exact callback URL in your OAuth App.</p>
+    </details>
+  </div>`;
+}
+
+function renderAppUpdates() {
+  const up = state.updates || {};
+  const current = up.current_version || state.status?.version || "unknown";
+  const canUpdate = Boolean(up.update_available && up.source === "supervisor");
+  const sourceLabel =
+    up.source === "supervisor"
+      ? "Home Assistant App store"
+      : up.source === "github"
+        ? "GitHub releases"
+        : "not checked yet";
+  return `<div class="card" style="margin-top:16px">
+    <h3>App updates</h3>
+    <div class="meta">
+      Current: <strong>v${esc(current)}</strong>${up.latest_version ? ` · Latest: <strong>v${esc(up.latest_version)}</strong>` : ""}<br>
+      Source: ${esc(sourceLabel)}${up.checked_at ? ` · Checked ${esc(relTime(up.checked_at))}` : ""}
+      ${up.error ? `<br><span style="color:var(--err)">${esc(up.error)}</span>` : ""}
+    </div>
+    ${
+      up.update_available
+        ? canUpdate
+          ? `<div class="row"><button class="btn ok" data-action="updateNow">Update to v${esc(up.latest_version)} now</button><button class="btn ghost" data-action="checkUpdates">Check again</button></div>
+      <p class="meta" style="margin-top:10px">The update is installed by Home Assistant and the app restarts automatically. This sidebar briefly disconnects and returns on its own.</p>`
+          : `<div class="row"><button class="btn ghost" data-action="checkUpdates">Check again</button></div>
+      <p class="meta" style="margin-top:10px">In-app updates need the Home Assistant Supervisor (App store). Update this app from its install source instead.</p>`
+        : `<div class="row"><button class="btn ghost" data-action="checkUpdates">Check for app updates</button></div>
+      <p class="meta" style="margin-top:10px">${
+        up.latest_version
+          ? `You have the latest version (v${esc(current)}).`
+          : "Checks run every 30 minutes in the background. The button performs an immediate check."
+      }</p>`
+    }
   </div>`;
 }
 
@@ -843,6 +994,7 @@ function render() {
           <h1>GitHub Sync</h1>
         </div>
         ${s.status?.username ? `<span class="user-chip">@${esc(s.status.username)}</span>` : ""}
+        ${s.status?.version ? `<span class="user-chip" title="Installed version of this app">v${esc(s.status.version)}</span>` : ""}
         <button class="icon-btn" data-action="refresh" title="Refresh">↻</button>
       </header>
       <nav class="tabs">
@@ -851,6 +1003,7 @@ function render() {
       </nav>
       <main>
         ${s.error ? `<div class="banner error">${esc(s.error)}</div>` : ""}
+        ${renderUpdateBanner()}
         ${s.view === "settings" ? renderSettings() : ""}
         ${s.view === "list" ? renderList() : ""}
         ${s.view === "editor" ? renderEditor() : ""}
@@ -858,6 +1011,11 @@ function render() {
       </main>
       ${s.toast ? `<div class="toast">${esc(s.toast)}</div>` : ""}
       ${s.busy ? `<div class="busy"><div><div class="spinner"></div><p class="meta" style="text-align:center;margin-top:12px">${esc(s.busy)}</p></div></div>` : ""}
+      ${
+        s.updating
+          ? `<div class="busy updating"><div><div class="spinner"></div><p class="meta" style="text-align:center;margin-top:12px">Updating GitHub Sync…<br>The app restarts with the new version automatically.<br>If this stalls, close and reopen the panel.</p></div></div>`
+          : ""
+      }
       ${
         s.confirm
           ? `<div class="overlay"><div class="dialog">

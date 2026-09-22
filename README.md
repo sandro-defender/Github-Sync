@@ -14,8 +14,8 @@ Requires **Home Assistant OS** or **Supervised**. Container and Core installs do
 
 ## Features
 
-- Connect one GitHub account with a personal access token or optional GitHub OAuth authorization. Map many folders.
-- Choose browser OAuth or device-code authorization in Settings; PAT entry remains available as a fallback.
+- Connect one GitHub account in one click — zero-config OAuth device flow (built-in GitHub CLI client), or a personal access token. Map many folders.
+- Optional custom OAuth App: browser OAuth flow and GitHub Enterprise support; PAT entry remains available as a fallback.
 - File browser over Supervisor mounts (`homeassistant`, `share`, `media`, `backup`, `addons`, `addon_configs`).
 - Search repositories the token can access, or type `owner/name`.
 - Separate **upload ignore** and **download ignore** lists (gitignore syntax).
@@ -27,6 +27,7 @@ Requires **Home Assistant OS** or **Supervised**. Container and Core installs do
 - Admin-only sidebar via Ingress. The token never reaches the browser.
 - Optional **automatic sync** per mapping (every 15 minutes, hourly, 6 hours, or daily): upload, download, or check-only.
 - Home Assistant persistent notification when a sync fails (or when check-only finds differences).
+- **In-app update check** with one-click updates: the app checks for a new version of itself every 30 minutes (and on demand), shows a banner + "Update now" button, and Home Assistant persistent notification when one is available.
 - Check for updates can flag **conflicts** after you have synced at least once (local and remote both changed since last sync).
 - Branded App Store icon and repository banner, plus the same icon in the Ingress UI.
 
@@ -45,18 +46,19 @@ GitHub Enterprise: set the API URL in Settings (for example `https://github.exam
 
 ## Automatic GitHub authorization
 
-PAT entry is still supported, but Settings also offers two OAuth App flows:
+Settings leads with **Connect with GitHub** — a zero-config OAuth **device flow**: press the button, open the GitHub link it shows, and enter the short code. No OAuth App to create, no callback URL, no token to paste. It uses the public GitHub CLI OAuth client ID (the same approach as the Home Assistant Version Control app); client IDs are public identifiers, not secrets, and the device flow needs no client secret at all.
 
-1. Create a GitHub OAuth App under **GitHub Settings → Developer settings → OAuth Apps**. Enable **Device Flow** in the app settings if you want the device-code option.
-2. In GitHub Sync Settings → **Automatic GitHub authorization**, enter the OAuth App client ID.
-3. Choose the scope:
-   - **Private and public repositories (`repo`)** for the same repository access as the classic PAT workflow.
-   - **Public repositories only (`public_repo`)** when private repositories are not needed.
-4. Choose one:
-   - **Authorize with device code** — recommended for Home Assistant. Open the displayed GitHub verification link, enter the short code, and keep the Home Assistant page open while it checks for approval. No callback URL is required.
-   - **Authorize in browser** — enter the exact callback URL registered in the OAuth App, optionally save the client secret, then approve the redirect-based login.
+Choose the scope first:
 
-The OAuth client secret, temporary codes, and resulting access token stay in the app's `/data` storage or server-side flow state; they are never returned to the browser. Device authorization is also the easiest option behind Home Assistant Ingress. GitHub Enterprise OAuth endpoints are derived from the configured API host when the Enterprise server supports the same OAuth paths.
+- **Private and public repositories (`repo`)** for the same repository access as the classic PAT workflow.
+- **Public repositories only (`public_repo`)** when private repositories are not needed.
+
+Optional, under **Advanced**:
+
+- **Your own OAuth App** — enter a client ID (takes precedence over the built-in client for device login) and, for **Authorize in browser**, the client secret and the exact callback URL registered in the OAuth App.
+- **GitHub Enterprise** — the built-in client only works on github.com; point the API URL at your Enterprise host and save your own locally registered OAuth App client ID, or use a personal access token.
+
+The OAuth client secret, temporary codes, and resulting access token stay in the app's `/data` storage or server-side flow state; they are never returned to the browser. Device authorization is also the easiest option behind Home Assistant Ingress. GitHub Enterprise OAuth endpoints are derived from the configured API host when the Enterprise server supports the same OAuth paths. PAT entry remains available in Settings for people who prefer it.
 
 ## Installation
 
@@ -110,6 +112,18 @@ New mappings exclude runtime and secrets from **upload**:
 - **Upload with an empty repo path replaces the repository tree** with the folder contents. Keep a README in the repo by putting it in the local folder or setting **repo path** (for example `homeassistant/`) so the rest of the repo is preserved.
 - Download keeps extra local files by default. The confirmation dialog has an explicit **Delete local extras** checkbox; only enable it when the local folder should mirror the remote tree. Download-ignore rules still protect ignored files. The API also accepts `delete_extras`.
 - Access tokens and OAuth client secrets are stored in the app `/data` volume and are never returned by the API.
+
+## App updates
+
+GitHub Sync checks for a newer version of **itself** in the background (every 30 minutes, first check ~20 s after start) and on demand:
+
+- **Check now** — Settings → **App updates** (or the green banner button) forces an immediate check.
+- **Update now** — installs the new version immediately. The app finds its own Home Assistant update entity (hassio integration) and calls the `update/install` service; Home Assistant then redownloads the image through the App store and restarts the app. The sidebar briefly disconnects and comes back on its own, then shows the new version in the header.
+- When an update is available, the app also raises a Home Assistant persistent notification (once per version).
+
+Update sources: the Supervisor App store (`/addons/self/info` — the same data the App store UI uses), falling back to the public GitHub release of this repository when the app runs outside Home Assistant (local development).
+
+Note: the Supervisor intentionally forbids an app from updating *itself* directly (`App github_sync can't update itself!`), which is why the one-click update goes through Home Assistant's update entity. On very old Home Assistant versions without the update entity, the app tells you to update from **Settings → Apps** instead.
 
 ## App options
 

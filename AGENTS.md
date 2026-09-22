@@ -28,7 +28,8 @@ This repository is a **Home Assistant App** (formerly add-on), slug `github_sync
 
 ## Versioning
 
-- Version is `github_sync/config.yaml` → `version`. Keep Dockerfile `io.hass.version` identical.
+- Version is `github_sync/config.yaml` → `version`. Keep the Dockerfile `io.hass.version` label and `github_sync/app/version.py` `__version__` identical.
+- `.github/scripts/prepare_release.py` bumps all three files together on release; the release workflow commits `config.yaml`, `Dockerfile`, `version.py`, and `CHANGELOG.md`.
 - Merges to `main` run `.github/workflows/release.yml`.
 
 ## Implementation notes

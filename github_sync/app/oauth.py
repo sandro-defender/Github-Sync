@@ -16,6 +16,12 @@ GITHUB_OAUTH_BASE = "https://github.com"
 DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 ALLOWED_SCOPES = {"repo", "public_repo"}
 
+#: Public OAuth client ID of the GitHub CLI, used as the built-in device-flow
+#: client so users can connect with one click and no OAuth App registration —
+#: the same approach other Home Assistant apps (e.g. Home Assistant Version
+#: Control) use. Client IDs are not secrets: they ship with every client.
+GITHUB_CLI_CLIENT_ID = "178c6fc778ccc68e1d6a"
+
 
 class OAuthError(Exception):
     """The GitHub OAuth service rejected or could not complete a flow."""
@@ -36,6 +42,27 @@ def oauth_base_from_api(api_base: str | None) -> str:
         return GITHUB_OAUTH_BASE
     path = parsed.path.removesuffix("/api/v3").rstrip("/")
     return urlunsplit((parsed.scheme, parsed.netloc, path, "", "")).rstrip("/")
+
+
+def is_github_dot_com(api_base: str | None) -> bool:
+    """True when the configured API host is github.com (not Enterprise)."""
+    return oauth_base_from_api(api_base) == GITHUB_OAUTH_BASE
+
+
+def device_flow_client_id(configured: str | None, api_base: str | None) -> str:
+    """Client ID for the device flow.
+
+    A user-configured OAuth App client ID always wins. Otherwise, on
+    github.com, the built-in public GitHub CLI client is used so the flow
+    works out of the box. GitHub Enterprise has no built-in client — return
+    an empty string so the caller can ask for a locally registered App.
+    """
+    configured = (configured or "").strip()
+    if configured:
+        return configured
+    if is_github_dot_com(api_base):
+        return GITHUB_CLI_CLIENT_ID
+    return ""
 
 
 async def _post_form(session: ClientSession, url: str, values: dict[str, str]) -> dict[str, Any]:

@@ -16,12 +16,20 @@ from fastapi.staticfiles import StaticFiles
 from github_client import GithubAPIError, GithubAuthError, GithubClient
 from ha import notify_ha
 from ignore import IgnoreMatcher
-from oauth import OAuthBroker, OAuthError, normalize_scope, oauth_base_from_api
+from oauth import (
+    OAuthBroker,
+    OAuthError,
+    device_flow_client_id,
+    is_github_dot_com,
+    normalize_scope,
+    oauth_base_from_api,
+)
 from paths import PathError, browse_directory, collect_files, discover_roots, resolve_under_roots
 from progress import ProgressHub
 from scheduler import Scheduler
 from store import IGNORE_PRESETS, Store
 from sync import SyncEngine, split_repo
+from updater import UpdateChecker, UpdateError, update_app_via_core
 
 STATIC_DIR = Path(__file__).parent / "static"
 _LOGGER = logging.getLogger("github_sync")
@@ -45,15 +53,21 @@ async def lifespan(app: FastAPI):
 
     scheduler = Scheduler(store, session, progress, run_mapping)
     app.state.scheduler = scheduler
-    task = asyncio.create_task(scheduler.loop(), name="github-sync-scheduler")
+    updates = UpdateChecker(session, store)
+    app.state.updates = updates
+    tasks = [
+        asyncio.create_task(scheduler.loop(), name="github-sync-scheduler"),
+        asyncio.create_task(updates.loop(), name="github-sync-update-checker"),
+    ]
     try:
         yield
     finally:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        for task in tasks:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         await session.close()
 
 
@@ -207,6 +221,32 @@ async def status() -> dict[str, Any]:
     return payload
 
 
+@app.get("/api/updates")
+async def updates() -> dict[str, Any]:
+    """Update status (cached; the background checker refreshes every 30 min)."""
+    return await app.state.updates.check()
+
+
+@app.post("/api/updates/check")
+async def check_updates() -> dict[str, Any]:
+    """Force an immediate update check."""
+    return await app.state.updates.check(force=True)
+
+
+@app.post("/api/updates/install")
+async def install_update() -> dict[str, Any]:
+    """Start the update now via Home Assistant's update entity for this app."""
+    return await update_app_via_core(
+        app.state.session,
+        expected_latest=app.state.updates.snapshot().get("latest_version"),
+    )
+
+
+@app.exception_handler(UpdateError)
+async def _update_error(_request: Request, exc: UpdateError) -> JSONResponse:
+    return JSONResponse({"detail": str(exc)}, status_code=409)
+
+
 @app.get("/api/progress")
 async def get_progress(mapping_id: str | None = None) -> dict[str, Any]:
     return progress().snapshot(mapping_id)
@@ -245,14 +285,19 @@ async def save_oauth_config(body: dict[str, Any]) -> dict[str, Any]:
 @app.post("/api/oauth/device/start")
 async def start_device_oauth() -> dict[str, Any]:
     config = store().oauth_config()
-    if not config["client_id"]:
-        raise HTTPException(status_code=400, detail="Save a GitHub OAuth App client ID first")
+    api_base = store().data.get("api_base") or "https://api.github.com"
+    client_id = device_flow_client_id(config["client_id"], api_base)
+    if not client_id:
+        raise HTTPException(
+            status_code=400,
+            detail="GitHub Enterprise needs an OAuth App client ID: save it below or use a personal access token",
+        )
     try:
         return await oauth().start_device(
             app.state.session,
-            client_id=config["client_id"],
+            client_id=client_id,
             scope=config["scope"],
-            oauth_base=oauth_base_from_api(store().data.get("api_base")),
+            oauth_base=oauth_base_from_api(api_base),
         )
     except OAuthError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
