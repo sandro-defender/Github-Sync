@@ -3,6 +3,11 @@ version: "0.4.0"
 slug: github_sync
 description: Sync any Home Assistant folder with a GitHub repository. Each folder can target a different repo, with a sidebar UI, file browser, and smart gitignore editor.
 url: https://github.com/sandro-defender/Github-Sync
+# Pre-built multi-arch image (ghcr.io/sandro-defender/{arch}-github_sync behind a
+# manifest). Published by .github/workflows/publish.yml; the tag always equals
+# `version` above. Verify with .github/scripts/check_published_images.sh before
+# changing this line.
+image: "ghcr.io/sandro-defender/github_sync"
 arch:
   - aarch64
   - amd64

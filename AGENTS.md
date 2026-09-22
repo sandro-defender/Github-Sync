@@ -45,7 +45,7 @@ This repository is a **Home Assistant App** (formerly add-on), slug `github_sync
 - Bind the server to `0.0.0.0:8099`.
 - Auto-sync: `scheduler.py` ticks every 30s; mapping fields `auto_sync`, `auto_interval_minutes` (min 5), `auto_direction`.
 - HA notifications: `ha.py` + `homeassistant_api: true` in `config.yaml`. No-op without `SUPERVISOR_TOKEN`.
-- Pre-built images: `.github/workflows/publish.yml` publishes `ghcr.io/sandro-defender/{arch}-github_sync` + the multi-arch manifest. Only set `image:` in `config.yaml` after `.github/scripts/check_published_images.sh <version>` passes for every line — a missing manifest makes installs fail instead of falling back to a local build.
+- Pre-built images: `.github/workflows/publish.yml` publishes `ghcr.io/sandro-defender/{arch}-github_sync` + the multi-arch manifest. `release.yml` dispatches it after the version bump (pushes made with `GITHUB_TOKEN` cannot trigger workflows), so the registry tag matches `version:`. `config.yaml` pins the generic manifest; verify a tag with `.github/scripts/check_published_images.sh <version>` before bumping a version by hand — a missing manifest makes installs fail instead of falling back to a local build.
 - Store artwork: normalise new art with `.github/scripts/optimize_store_assets.py` (icon 128×128, logo 250×100).
 
 ## How to run tests

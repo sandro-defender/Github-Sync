@@ -21,8 +21,8 @@ Requires **Home Assistant OS** or **Supervised** (Apps are not available on Cont
 
 **Session branch:** `arena/01a0c6f9-github-sync` (stay on the branch provided by your Arena session).
 **Base version:** `0.3.2` in config.yaml, Dockerfile and version.py. Release automation bumps all three on merge.
-**Current work:** the sidebar UI was rewritten as a Preact component app (vendored ESM runtime, no build step, dark-first design system) and the store/release readiness work landed: a multi-arch image publish workflow, an image verification script, normalised store artwork, de/ fr/ es/ it option translations, an app-folder README and `docs/store-submission.md`.
-**Validation:** the publish workflow built `amd64` and `aarch64` images successfully on the PR (no push); 81 Python tests and 11 frontend render tests passing (the frontend suite mounts the real app in Node via `tests/dom_stub.cjs`), plus an ESM syntax check over every shipped module. Still **not** verified on real hardware: Supervisor/device approval, a real app install, auto-sync denials, and the first GHCR publish run. The sandbox cannot reach ghcr.io, so the publish workflow has not been executed yet.
+**Current work:** PR #7 merged and released as **v0.4.0** (merge commit `8d31027`): the sidebar UI is now a Preact component app (vendored ESM runtime, no build step, dark-first design system) and the store/release readiness work landed (multi-arch publish workflow, verification script, normalised artwork, de/es/fr/it translations, app-folder README, `docs/store-submission.md`). The release workflow dispatched the image build, which published `ghcr.io/sandro-defender/{aarch64,amd64}-github_sync:0.4.0` and the multi-arch `ghcr.io/sandro-defender/github_sync:0.4.0`/`:latest`. This session's next PR enables `image:` in `config.yaml` so installs stop building locally.
+**Validation:** the publish workflow built and pushed both architectures plus the manifest for 0.4.0 (all four jobs green); 81 Python tests and 11 frontend render tests passing (the frontend suite mounts the real app in Node via `tests/dom_stub.cjs`), plus an ESM syntax check over every shipped module. Still **not** verified on real hardware: Supervisor/device approval, a real app install, auto-sync denials, and the first GHCR publish run. The sandbox cannot reach ghcr.io, so the publish workflow has not been executed yet.
 
 **What works today**
 
@@ -50,8 +50,8 @@ Requires **Home Assistant OS** or **Supervised** (Apps are not available on Cont
 
 **Next work (Phase 11 → 12)**
 
-1. Verify on a real HA OS/Supervised install: install/update flow, device authorization, fine-grained read-only repos, auto-sync denial, dry-run previews, and the panel on mobile + light theme (checklist in `docs/store-submission.md`).
-2. Run `.github/workflows/publish.yml` on `main`, confirm the GHCR manifests, then add `image: "ghcr.io/sandro-defender/github_sync"` in `config.yaml` and ship a patch release.
+1. Verify on a real HA OS/Supervised install: install/update flow (now pulling a pre-built image), device authorization, fine-grained read-only repos, auto-sync denial, dry-run previews, and the panel on mobile + light theme (checklist in `docs/store-submission.md`).
+2. Confirm the 0.4.0 GHCR manifests with `.github/scripts/check_published_images.sh 0.4.0`, then merge the follow-up PR that sets `image:` in `config.yaml`.
 3. Further sync hardening: preserve Git tree modes/non-blob entries, improve large-blob handling and concurrency protections.
 4. Optional extras: an AppArmor profile, German/French/Spanish/Italian *UI* strings, per-mapping sync history view.
 5. Submit to a curated app store once 1–2 are done (`docs/store-submission.md` has the practical path).
@@ -194,7 +194,8 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 - [x] Multi-arch image pipeline: `.github/workflows/publish.yml` (Home Assistant builder actions, GHCR, `{arch}` images + multi-arch manifest) and `.github/scripts/check_published_images.sh` to gate enabling `image:` in `config.yaml`.
 - [x] Pipeline validated in CI: pull-request runs build `amd64` and `aarch64` images (~1m35s each) without pushing, so the Dockerfile and builder inputs are proven before merge (PR #7 checks).
 - [x] Release ordering fixed: `release.yml` dispatches the image publish after the version bump, so image tags match the released version.
-- [ ] Run the publish workflow on `main`, verify the manifests with `.github/scripts/check_published_images.sh 0.3.3` and then set `image: "ghcr.io/sandro-defender/github_sync"` (needs a merge to `main`; the sandbox cannot reach ghcr.io).
+- [x] Publish workflow ran on `main` after the version bump and pushed both architecture images plus the multi-arch manifest for 0.4.0.
+- [ ] Verify the registry entries from a machine with ghcr.io access (`.github/scripts/check_published_images.sh 0.4.0`) — the sandbox cannot reach ghcr.io, so this is the one unverified step.
 - [x] Cap or prune `file_shas` snapshots if `/data/github_sync.json` grows large.
 - [x] Translations beyond English for Supervisor options (de, es, fr, it).
 - [x] Store preparation: artwork within the presentation guidelines (icon 128×128, logo 250×100), app-folder `README.md` intro, and `docs/store-submission.md` with the requirement checklist + device verification list.
@@ -213,7 +214,8 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 - [x] Multi-arch publish workflow and image verification script.
 - [x] Store artwork normalisation script and de/es/fr/it option translations.
 - [x] Pull-request build mode: both architectures build in CI without pushing.
-- [ ] First GHCR publish run + enable `image:` in `config.yaml`.
+- [x] First GHCR publish run (0.4.0, both architectures + manifest).
+- [ ] Enable `image:` in `config.yaml` — change prepared in this session's follow-up PR; merge after the registry check passes. Expect a short (<5 min) window right after that merge where a new release's image is still building.
 - [ ] Device verification checklist on a real Home Assistant installation.
 
 ---

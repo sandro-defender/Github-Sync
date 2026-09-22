@@ -32,7 +32,7 @@ Guidelines: [App presentation](https://developers.home-assistant.io/docs/apps/pr
 | Ingress UI (no exposed port, no host network) | ✅ `ingress: true`, `ingress_stream: true` |
 | Least privilege (no `host_*`, no `devices`, no `privileged`) | ✅ |
 | CI (linter + Python + frontend tests) | ✅ `.github/workflows/validate.yml` |
-| **Pre-built multi-arch images** | ⏳ pipeline builds `amd64` + `aarch64` successfully in pull-request runs; the first registry push happens on merge to `main` |
+| **Pre-built multi-arch images** | ✅ `0.4.0` published for `amd64` + `aarch64` with the multi-arch manifest; `image:` pinned in `config.yaml` in the follow-up PR |
 | Verified on a real Home Assistant OS install | ⏳ see “Device verification” below |
 | AppArmor profile (optional, extra security point) | ⏳ not shipped — needs on-device validation first |
 
@@ -58,7 +58,8 @@ preferred end state is a published multi-arch image.
 
    Every line must be a green ✓ — the script exits non-zero if a manifest is
    missing.
-3. Only then add the image to the app manifest and ship a patch release:
+3. Only then add the image to the app manifest (done for `0.4.0` in the follow-up
+   PR) and ship a patch release:
 
    ```yaml
    # github_sync/config.yaml
