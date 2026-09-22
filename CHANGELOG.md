@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.2.2] - 2026-09-22
+
+- Add in-app update check with one-click updates (#3)
+
 ## [0.2.1] - 2026-09-22
 
 - Add GitHub OAuth authorization choices

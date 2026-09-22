@@ -22,6 +22,9 @@ Requires **Home Assistant OS** or **Supervised** (Apps are not available on Cont
 **Branch:** each Arena session is fixed to its own `arena/…` branch — work only on the branch named in your session. The previous session branch `arena/01a0c675-github-sync` is **merged** and released; start new work from a fresh branch off `main`.
 **Last PR:** https://github.com/sandro-defender/Github-Sync/pull/3 (merged) — zero-config GitHub device-flow login + in-app update check / one-click update.
 **Version:** `0.2.2` in `github_sync/config.yaml` (also `github_sync/app/version.py` and the Dockerfile label — the release script keeps all three in sync; it bumps on merge to `main` and tags the GitHub Release)
+**Branch:** `arena/01a0c675-github-sync` (do not switch branches).<br>
+**PR:** https://github.com/sandro-defender/Github-Sync/pull/3<br>
+**Version:** `0.2.1` in `github_sync/config.yaml` (also `github_sync/app/version.py` and the Dockerfile label — the release script keeps all three in sync)
 
 **What works today**
 
@@ -44,7 +47,7 @@ Requires **Home Assistant OS** or **Supervised** (Apps are not available on Cont
 - Put the GitHub token in API responses or in `config.yaml` options.
 - Use a `git` CLI; keep the Git Data API.
 
-**Next work (Phase 11)**
+**Next work (Phase 10)**
 
 1. Dry-run mode that never writes.
 2. Publish multi-arch images and set `image:` in `config.yaml` so Supervisor does not local-build.
