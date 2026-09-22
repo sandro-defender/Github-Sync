@@ -21,7 +21,7 @@ RUN chmod a+x /run.sh
 LABEL \
     io.hass.name="GitHub Sync" \
     io.hass.description="Sync Home Assistant folders with GitHub repositories" \
-    io.hass.version="0.4.0" \
+    io.hass.version="0.5.0" \
     io.hass.type="app" \
     io.hass.arch="aarch64|amd64"
 

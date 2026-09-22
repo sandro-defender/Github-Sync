@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.5.0] - 2026-09-22
+
+- docs(store): flag GHCR package visibility before enabling image:
+- fix(publish): normalise JSON-quoted helper outputs before building tags
+- feat(release): install from the published multi-arch image
+
 ## [0.4.0] - 2026-09-22
 
 Shipped in pull request #7 (merge commit `8d31027`). The publish workflow
