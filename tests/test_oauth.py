@@ -1,101 +1,134 @@
-"""OAuth configuration and flow-safety tests."""
+"""Device-flow OAuth broker tests (the only sign-in method)."""
 
 from __future__ import annotations
 
-import os
+import asyncio
 import sys
-import tempfile
+import time
 import unittest
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from unittest.mock import AsyncMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "github_sync" / "app"))
 
 from oauth import (  # noqa: E402
+    DEVICE_SCOPE,
+    GITHUB_API_BASE,
     GITHUB_CLI_CLIENT_ID,
+    GITHUB_OAUTH_BASE,
     OAuthBroker,
-    device_flow_client_id,
-    is_github_dot_com,
-    normalize_scope,
-    oauth_base_from_api,
+    OAuthError,
 )
-from store import Store  # noqa: E402
+
+
+def _response(payload: dict, status: int = 200):
+    response = AsyncMock()
+    response.status = status
+    response.headers = {"Content-Type": "application/json"}
+    import json as _json
+
+    response.text = AsyncMock(return_value=_json.dumps(payload))
+    context = AsyncMock()
+    context.__aenter__ = AsyncMock(return_value=response)
+    context.__aexit__ = AsyncMock(return_value=False)
+    return context
 
 
 class OAuthTests(unittest.TestCase):
-    def test_scope_is_limited_to_supported_choices(self) -> None:
-        self.assertEqual(normalize_scope("repo"), "repo")
-        self.assertEqual(normalize_scope("public_repo"), "public_repo")
-        self.assertEqual(normalize_scope("admin:org"), "repo")
+    def test_builtin_client_constants(self) -> None:
+        self.assertTrue(GITHUB_CLI_CLIENT_ID)
+        self.assertEqual(GITHUB_OAUTH_BASE, "https://github.com")
+        self.assertEqual(GITHUB_API_BASE, "https://api.github.com")
+        self.assertEqual(DEVICE_SCOPE, "repo")
 
-    def test_oauth_base_for_github_and_enterprise(self) -> None:
-        self.assertEqual(oauth_base_from_api("https://api.github.com"), "https://github.com")
-        self.assertEqual(
-            oauth_base_from_api("https://github.example.com/api/v3"),
-            "https://github.example.com",
+    def test_start_device_returns_code_and_link(self) -> None:
+        session = AsyncMock()
+        session.post = lambda *a, **k: _response(
+            {
+                "device_code": "dev-123",
+                "user_code": "ABCD-1234",
+                "verification_uri": "https://github.com/login/device",
+                "expires_in": 900,
+                "interval": 5,
+            }
         )
-
-    def test_is_github_dot_com(self) -> None:
-        self.assertTrue(is_github_dot_com("https://api.github.com"))
-        self.assertTrue(is_github_dot_com(None))
-        self.assertFalse(is_github_dot_com("https://github.example.com/api/v3"))
-
-    def test_device_flow_client_id_prefers_configured(self) -> None:
-        self.assertEqual(
-            device_flow_client_id("Iv1.custom", "https://api.github.com"), "Iv1.custom"
-        )
-        self.assertEqual(
-            device_flow_client_id("Iv1.custom", "https://github.example.com/api/v3"),
-            "Iv1.custom",
-        )
-
-    def test_device_flow_client_id_builtin_for_github_com(self) -> None:
-        # No user OAuth App: the public GitHub CLI client is used, so the
-        # device flow works out of the box (same as HA Version Control).
-        self.assertEqual(device_flow_client_id("", "https://api.github.com"), GITHUB_CLI_CLIENT_ID)
-        self.assertEqual(device_flow_client_id(None, None), GITHUB_CLI_CLIENT_ID)
-        self.assertEqual(device_flow_client_id("  ", "https://api.github.com"), GITHUB_CLI_CLIENT_ID)
-
-    def test_device_flow_client_id_empty_for_enterprise(self) -> None:
-        # GitHub Enterprise has no built-in client; the caller must ask for one.
-        self.assertEqual(
-            device_flow_client_id("", "https://github.example.com/api/v3"), ""
-        )
-
-    def test_public_status_does_not_expose_oauth_secret(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            os.environ["GITHUB_SYNC_DATA"] = str(Path(directory) / "state.json")
-            try:
-                store = Store()
-                store.data["oauth"] = {
-                    "client_id": "client-id",
-                    "client_secret": "super-secret",
-                    "redirect_uri": "https://ha.example/api/oauth/callback",
-                    "scope": "repo",
-                }
-                public = store.public_status()
-            finally:
-                os.environ.pop("GITHUB_SYNC_DATA", None)
-        self.assertNotIn("client_secret", public["oauth"])
-        self.assertTrue(public["oauth"]["client_secret_configured"])
-
-    def test_web_state_is_random_and_authorize_url_contains_required_values(self) -> None:
         broker = OAuthBroker()
-        result = broker.start_web(
-            client_id="client-id",
-            client_secret="secret",
-            redirect_uri="https://ha.example/api/oauth/callback",
-            return_to="/",
-            scope="public_repo",
-            oauth_base="https://github.com",
+        result = asyncio.run(broker.start_device(session))
+        self.assertEqual(result["user_code"], "ABCD-1234")
+        self.assertIn("github.com/login/device", result["verification_uri"])
+        self.assertIn(result["flow_id"], broker.device_flows)
+
+    def test_start_device_surfaces_github_errors(self) -> None:
+        session = AsyncMock()
+        session.post = lambda *a, **k: _response(
+            {"error": "slow_down", "error_description": "too fast"}, status=200
         )
-        parsed = urlsplit(result["authorize_url"])
-        params = parse_qs(parsed.query)
-        self.assertEqual(params["client_id"], ["client-id"])
-        self.assertEqual(params["scope"], ["public_repo"])
-        self.assertEqual(params["redirect_uri"], ["https://ha.example/api/oauth/callback"])
-        self.assertIn(params["state"][0], broker.web_flows)
-        self.assertGreaterEqual(len(params["state"][0]), 32)
+        broker = OAuthBroker()
+        with self.assertRaises(OAuthError):
+            asyncio.run(broker.start_device(session))
+
+    def test_poll_unknown_flow_raises(self) -> None:
+        broker = OAuthBroker()
+        with self.assertRaises(OAuthError):
+            asyncio.run(broker.poll_device(AsyncMock(), "missing"))
+
+    def test_poll_authorized_returns_token_once(self) -> None:
+        session = AsyncMock()
+        session.post = lambda *a, **k: _response(
+            {
+                "device_code": "dev-123",
+                "user_code": "ABCD-1234",
+                "verification_uri": "https://github.com/login/device",
+                "expires_in": 900,
+                "interval": 5,
+            }
+        )
+        broker = OAuthBroker()
+        started = asyncio.run(broker.start_device(session))
+        flow_id = started["flow_id"]
+        session.post = lambda *a, **k: _response({"access_token": "gho_secret"})
+        result = asyncio.run(broker.poll_device(session, flow_id))
+        self.assertEqual(result["status"], "authorized")
+        self.assertEqual(result["access_token"], "gho_secret")
+        self.assertNotIn(flow_id, broker.device_flows)
+
+    def test_poll_pending_then_slow_down(self) -> None:
+        session = AsyncMock()
+        session.post = lambda *a, **k: _response(
+            {
+                "device_code": "dev-123",
+                "user_code": "ABCD-1234",
+                "verification_uri": "https://github.com/login/device",
+                "expires_in": 900,
+                "interval": 5,
+            }
+        )
+        broker = OAuthBroker()
+        flow_id = asyncio.run(broker.start_device(session))["flow_id"]
+        session.post = lambda *a, **k: _response({"error": "authorization_pending"})
+        result = asyncio.run(broker.poll_device(session, flow_id))
+        self.assertEqual(result["status"], "pending")
+        # Immediate re-poll is throttled locally without hitting GitHub.
+        throttled = asyncio.run(broker.poll_device(session, flow_id))
+        self.assertEqual(throttled["status"], "pending")
+
+    def test_cancel_and_expiry_cleanup(self) -> None:
+        broker = OAuthBroker()
+        broker.cancel_device("never-existed")  # must not raise
+        session = AsyncMock()
+        session.post = lambda *a, **k: _response(
+            {
+                "device_code": "dev-123",
+                "user_code": "ABCD-1234",
+                "verification_uri": "https://github.com/login/device",
+                "expires_in": -1,
+                "interval": 5,
+            }
+        )
+        flow_id = asyncio.run(broker.start_device(session))["flow_id"]
+        broker.device_flows[flow_id].expires_at = time.time() - 1
+        with self.assertRaises(OAuthError):
+            asyncio.run(broker.poll_device(session, flow_id))
 
 
 if __name__ == "__main__":

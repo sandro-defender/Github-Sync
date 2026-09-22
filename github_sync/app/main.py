@@ -10,25 +10,18 @@ from typing import Any
 
 from aiohttp import ClientSession
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from github_client import GithubAPIError, GithubAuthError, GithubClient
 from ha import notify_ha
 from ignore import IgnoreMatcher
-from oauth import (
-    OAuthBroker,
-    OAuthError,
-    device_flow_client_id,
-    is_github_dot_com,
-    normalize_scope,
-    oauth_base_from_api,
-)
+from oauth import GITHUB_API_BASE, OAuthBroker, OAuthError
 from paths import PathError, browse_directory, collect_files, discover_roots, resolve_under_roots
 from progress import ProgressHub
 from scheduler import Scheduler
 from store import IGNORE_PRESETS, Store
-from sync import SyncEngine, split_repo
+from sync import SyncEngine, cap_file_shas, split_repo
 from updater import UpdateChecker, UpdateError, update_app_via_core
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -94,8 +87,8 @@ def oauth() -> OAuthBroker:
 def client_or_401() -> GithubClient:
     token = store().data.get("access_token") or ""
     if not token:
-        raise HTTPException(status_code=401, detail="Connect a GitHub token first")
-    api_base = store().data.get("api_base") or "https://api.github.com"
+        raise HTTPException(status_code=401, detail="Connect GitHub first")
+    api_base = store().data.get("api_base") or GITHUB_API_BASE
     return GithubClient(app.state.session, token, api_base)
 
 
@@ -113,27 +106,10 @@ async def _notify_failure(mapping: dict[str, Any], err: Exception) -> None:
     )
 
 
-async def _save_validated_token(token: str, api_base: str) -> None:
-    github = GithubClient(app.state.session, token, api_base)
+async def _save_validated_token(token: str) -> None:
+    github = GithubClient(app.state.session, token, GITHUB_API_BASE)
     user = await github.get_user()
-    await store().set_token(token, api_base, user.get("login"), user.get("id"))
-
-
-def _safe_return_to(value: str | None, request: Request) -> str:
-    """Only redirect OAuth users back to this Ingress host or a relative path."""
-    from urllib.parse import urlsplit
-
-    candidate = (value or "/").strip()
-    if candidate.startswith("/") and not candidate.startswith("//"):
-        return candidate
-    parsed = urlsplit(candidate)
-    hosts = {
-        request.headers.get("host", ""),
-        request.headers.get("x-forwarded-host", "").split(",", 1)[0].strip(),
-    }
-    if parsed.scheme in ("http", "https") and parsed.netloc in hosts:
-        return candidate
-    return "/"
+    await store().set_token(token, user.get("login"), user.get("id"))
 
 
 async def _execute(
@@ -165,6 +141,10 @@ async def _execute(
         else:
             raise HTTPException(status_code=400, detail="Unknown direction")
 
+        # Cap the conflict-detection snapshot so /data stays small (roadmap).
+        capped_shas, shas_truncated, shas_total = cap_file_shas(
+            result.pop("file_shas", None)
+        )
         last = {
             "at": result.get("at"),
             "direction": direction if direction != "check" else "check",
@@ -172,8 +152,11 @@ async def _execute(
             "html_url": result.get("html_url"),
             "uploaded": result.get("uploaded"),
             "downloaded": result.get("downloaded"),
-            "file_shas": result.pop("file_shas", None),
+            "file_shas": capped_shas,
         }
+        if shas_truncated:
+            last["file_shas_truncated"] = True
+            last["file_shas_total"] = shas_total
         if direction != "check":
             mapping["last_sync"] = last
         mapping["last_error"] = None
@@ -252,53 +235,18 @@ async def get_progress(mapping_id: str | None = None) -> dict[str, Any]:
     return progress().snapshot(mapping_id)
 
 
-@app.post("/api/token")
-async def set_token(body: dict[str, Any]) -> dict[str, Any]:
-    token = (body.get("access_token") or "").strip()
-    api_base = (body.get("api_base") or "https://api.github.com").strip() or "https://api.github.com"
-    if not token:
-        raise HTTPException(status_code=400, detail="Token is required")
-    await _save_validated_token(token, api_base)
-    return store().public_status()
-
-
 @app.delete("/api/token")
 async def clear_token() -> dict[str, bool]:
+    """Sign out: forget the GitHub account (device flow re-authorizes)."""
     await store().clear_token()
     return {"ok": True}
 
 
-@app.post("/api/oauth/config")
-async def save_oauth_config(body: dict[str, Any]) -> dict[str, Any]:
-    scope = normalize_scope(body.get("scope"))
-    await store().save_oauth_config(
-        {
-            "client_id": body.get("client_id"),
-            "client_secret": body.get("client_secret"),
-            "redirect_uri": body.get("redirect_uri"),
-            "scope": scope,
-        }
-    )
-    return store().public_status()
-
-
 @app.post("/api/oauth/device/start")
 async def start_device_oauth() -> dict[str, Any]:
-    config = store().oauth_config()
-    api_base = store().data.get("api_base") or "https://api.github.com"
-    client_id = device_flow_client_id(config["client_id"], api_base)
-    if not client_id:
-        raise HTTPException(
-            status_code=400,
-            detail="GitHub Enterprise needs an OAuth App client ID: save it below or use a personal access token",
-        )
+    """Start device authorization — the only sign-in method (no options)."""
     try:
-        return await oauth().start_device(
-            app.state.session,
-            client_id=client_id,
-            scope=config["scope"],
-            oauth_base=oauth_base_from_api(api_base),
-        )
+        return await oauth().start_device(app.state.session)
     except OAuthError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
 
@@ -311,10 +259,7 @@ async def poll_device_oauth(body: dict[str, Any]) -> dict[str, Any]:
     try:
         result = await oauth().poll_device(app.state.session, flow_id)
         if result.get("status") == "authorized":
-            await _save_validated_token(
-                str(result.pop("access_token")),
-                store().data.get("api_base") or "https://api.github.com",
-            )
+            await _save_validated_token(str(result.pop("access_token")))
             result["account"] = store().public_status()
         return result
     except OAuthError as err:
@@ -327,41 +272,6 @@ async def poll_device_oauth(body: dict[str, Any]) -> dict[str, Any]:
 async def cancel_device_oauth(flow_id: str) -> dict[str, bool]:
     oauth().cancel_device(flow_id)
     return {"ok": True}
-
-
-@app.post("/api/oauth/web/start")
-async def start_web_oauth(body: dict[str, Any], request: Request) -> dict[str, str]:
-    config = store().oauth_config()
-    if not config["client_id"] or not config["client_secret"]:
-        raise HTTPException(status_code=400, detail="Save the OAuth App client ID and secret first")
-    if not config["redirect_uri"]:
-        raise HTTPException(status_code=400, detail="Save the OAuth callback URL first")
-    return oauth().start_web(
-        client_id=config["client_id"],
-        client_secret=config["client_secret"],
-        redirect_uri=config["redirect_uri"],
-        return_to=_safe_return_to(body.get("return_to"), request),
-        scope=config["scope"],
-        oauth_base=oauth_base_from_api(store().data.get("api_base")),
-    )
-
-
-@app.get("/api/oauth/callback")
-async def oauth_callback(
-    _request: Request, code: str | None = None, state: str | None = None, error: str | None = None
-):
-    if error:
-        return JSONResponse({"detail": f"GitHub authorization was not completed: {error}"}, status_code=400)
-    if not code or not state:
-        return JSONResponse({"detail": "GitHub did not return an authorization code"}, status_code=400)
-    try:
-        flow, token = await oauth().finish_web(app.state.session, code=code, state=state)
-        await _save_validated_token(token, store().data.get("api_base") or "https://api.github.com")
-        return RedirectResponse(flow.return_to)
-    except OAuthError as err:
-        return JSONResponse({"detail": str(err)}, status_code=400)
-    except GithubAPIError as err:
-        return JSONResponse({"detail": str(err)}, status_code=401)
 
 
 @app.get("/api/mappings")

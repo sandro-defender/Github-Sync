@@ -50,13 +50,8 @@ const state = {
   ignoreSide: "upload",
   diff: null,
   confirm: null,
-  tokenDraft: "",
-  apiDraft: "https://api.github.com",
-  oauthClientIdDraft: "",
-  oauthClientSecretDraft: "",
-  oauthRedirectDraft: "",
-  oauthScopeDraft: "repo",
-  oauthDevice: null,
+  devicePopup: null,
+  userMenuOpen: false,
   updates: {},
   updating: false,
 };
@@ -144,10 +139,6 @@ async function refresh() {
       mappings: mappings.mappings || [],
       presets: presets.presets || {},
       updates,
-      apiDraft: status.api_base || "https://api.github.com",
-      oauthClientIdDraft: status.oauth?.client_id || "",
-      oauthRedirectDraft: status.oauth?.redirect_uri || "",
-      oauthScopeDraft: status.oauth?.scope || "repo",
     });
   } catch (err) {
     setState({ loading: false, error: err.message || String(err) });
@@ -188,7 +179,7 @@ function crumbs(path) {
 
 async function onAction(action, el) {
   const id = el.dataset.id;
-  if (action === "tab") return setState({ view: el.dataset.view, editor: null, diff: null, error: null });
+  if (action === "tab") return setState({ view: el.dataset.view, editor: null, diff: null, error: null, userMenuOpen: false });
   if (action === "refresh") return refresh();
   if (action === "add")
     return setState({ view: "editor", editor: blankEditor(), browser: null, preview: null });
@@ -266,13 +257,15 @@ async function onAction(action, el) {
   }
   if (action === "dismissUpdate") return dismissUpdate((state.updates || {}).latest_version);
   if (action === "checkUpdates") return checkUpdatesNow();
-  if (action === "saveToken") return saveToken();
-  if (action === "clearToken") return clearToken();
-  if (action === "saveOAuth") return saveOAuthConfig();
-  if (action === "useCallback") return setState({ oauthRedirectDraft: callbackUrl() });
-  if (action === "deviceAuth") return startDeviceAuth();
-  if (action === "webAuth") return startWebAuth();
+  if (action === "authDevice") return startDeviceAuth();
+  if (action === "copyCode") return copyDeviceCode();
   if (action === "cancelDevice") return cancelDeviceAuth();
+  if (action === "toggleUserMenu") return setState({ userMenuOpen: !state.userMenuOpen });
+  if (action === "logout") return logout();
+  if (action === "switchAccount") {
+    setState({ userMenuOpen: false });
+    return startDeviceAuth();
+  }
 }
 
 async function browse(path) {
@@ -480,109 +473,98 @@ async function updateAppNow(from) {
   }
 }
 
-async function saveToken() {
+async function copyTextToClipboard(text) {
   try {
-    await run("Connecting to GitHub…", () =>
-      api("api/token", {
-        method: "POST",
-        body: JSON.stringify({
-          access_token: state.tokenDraft,
-          api_base: state.apiDraft,
-        }),
-      })
-    );
-    state.tokenDraft = "";
-    toast("GitHub connected");
-    await refresh();
+    await navigator.clipboard.writeText(text);
+    return true;
   } catch (_err) {
-    /* stored */
+    try {
+      const area = document.createElement("textarea");
+      area.value = text;
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.appendChild(area);
+      area.select();
+      document.execCommand("copy");
+      area.remove();
+      return true;
+    } catch (_e2) {
+      return false;
+    }
   }
-}
-
-async function clearToken() {
-  try {
-    await run("Removing token…", () => api("api/token", { method: "DELETE" }));
-    toast("Token removed");
-    await refresh();
-  } catch (_err) {
-    /* stored */
-  }
-}
-
-function callbackUrl() {
-  return new URL("api/oauth/callback", window.location.href).href;
-}
-
-async function saveOAuthConfig(showToast = true) {
-  const result = await run("Saving authorization settings…", () =>
-    api("api/oauth/config", {
-      method: "POST",
-      body: JSON.stringify({
-        client_id: state.oauthClientIdDraft,
-        client_secret: state.oauthClientSecretDraft || undefined,
-        redirect_uri: state.oauthRedirectDraft,
-        scope: state.oauthScopeDraft,
-      }),
-    })
-  );
-  state.oauthClientSecretDraft = "";
-  setState({ status: result });
-  if (showToast) toast("Authorization settings saved");
-  return result;
 }
 
 async function startDeviceAuth() {
+  if (state.devicePopup) return;
   try {
-    await saveOAuthConfig(false);
-    const device = await run("Starting GitHub device authorization…", () =>
+    const device = await run("Starting GitHub authorization…", () =>
       api("api/oauth/device/start", { method: "POST" })
     );
-    setState({ oauthDevice: { ...device, status: "pending" } });
-    toast(`Enter code ${device.user_code} on GitHub`);
+    setState({
+      devicePopup: { ...device, status: "pending", copied: false, error: null },
+    });
+    const copied = await copyTextToClipboard(device.user_code);
+    if (state.devicePopup && state.devicePopup.flow_id === device.flow_id) {
+      setState({ devicePopup: { ...state.devicePopup, copied } });
+    }
     pollDeviceAuth(device.flow_id, (device.interval || 5) * 1000);
   } catch (_err) {
     /* stored */
   }
 }
 
+async function copyDeviceCode() {
+  const code = state.devicePopup?.user_code;
+  if (!code) return;
+  const copied = await copyTextToClipboard(code);
+  if (copied) {
+    setState({ devicePopup: { ...state.devicePopup, copied: true } });
+    toast("Code copied to clipboard");
+  } else {
+    toast("Copy the code manually");
+  }
+}
+
 async function pollDeviceAuth(flowId, delay) {
   setTimeout(async () => {
-    if (!state.oauthDevice || state.oauthDevice.flow_id !== flowId) return;
+    if (!state.devicePopup || state.devicePopup.flow_id !== flowId) return;
     try {
       const result = await api("api/oauth/device/poll", {
         method: "POST",
         body: JSON.stringify({ flow_id: flowId }),
       });
       if (result.status === "pending") {
-        setState({ oauthDevice: { ...state.oauthDevice, status: "pending" } });
         pollDeviceAuth(flowId, Math.max(1000, (result.retry_after || 5) * 1000));
         return;
       }
-      setState({ oauthDevice: null });
+      setState({ devicePopup: null });
       toast(`GitHub authorized as @${result.account?.username || "user"}`);
       await refresh();
     } catch (err) {
-      setState({ oauthDevice: null, error: err.message || String(err) });
+      if (!state.devicePopup || state.devicePopup.flow_id !== flowId) return;
+      setState({
+        devicePopup: {
+          ...state.devicePopup,
+          status: "error",
+          error: err.message || String(err),
+        },
+      });
     }
   }, delay);
 }
 
 async function cancelDeviceAuth() {
-  const flowId = state.oauthDevice?.flow_id;
+  const flowId = state.devicePopup?.flow_id;
   if (flowId) await api(`api/oauth/device/${encodeURIComponent(flowId)}`, { method: "DELETE" }).catch(() => {});
-  setState({ oauthDevice: null });
+  setState({ devicePopup: null });
 }
 
-async function startWebAuth() {
+async function logout() {
   try {
-    await saveOAuthConfig(false);
-    const result = await run("Opening GitHub authorization…", () =>
-      api("api/oauth/web/start", {
-        method: "POST",
-        body: JSON.stringify({ return_to: window.location.pathname + window.location.search }),
-      })
-    );
-    window.location.assign(result.authorize_url);
+    await run("Signing out…", () => api("api/token", { method: "DELETE" }));
+    setState({ userMenuOpen: false });
+    toast("Signed out from GitHub");
+    await refresh();
   } catch (_err) {
     /* stored */
   }
@@ -606,8 +588,8 @@ function renderList() {
   if (s.loading) return `<p class="meta">Loading mappings…</p>`;
   if (!s.status?.configured) {
     return `<div class="empty">${SVG}<h2>Connect GitHub first</h2>
-      <p>Open Settings and connect GitHub — one-click device login, or paste a personal access token — then map folders.</p>
-      <div class="row" style="justify-content:center"><button class="btn" data-action="tab" data-view="settings">Open settings</button></div></div>`;
+      <p>Authorize with a device code — approve it on github.com — then map folders to repositories.</p>
+      <div class="row" style="justify-content:center"><button class="btn" data-action="authDevice">Authorise with device code</button><button class="btn ghost" data-action="tab" data-view="settings">Open settings</button></div></div>`;
   }
   const cards = (s.mappings || [])
     .map((m) => {
@@ -874,29 +856,7 @@ function renderDiff() {
 
 function renderSettings() {
   const s = state.status || {};
-  const oauth = s.oauth || {};
-  const device = state.oauthDevice;
-  return `${renderOauthCard(oauth, device)}
-  <div class="card" style="margin-top:16px">
-    <h3>GitHub connection (personal access token)</h3>
-    <div class="meta">
-      ${s.configured ? `Signed in as <strong>@${esc(s.username)}</strong>` : "Not configured"}<br>
-      API: ${esc(s.api_base || "https://api.github.com")}<br>
-      Mounts: ${esc((s.roots || []).join(", ") || "none")}<br>
-      Mappings: ${s.mapping_count ?? state.mappings.length}
-    </div>
-    <label class="field" style="margin-top:16px">Personal access token
-      <input type="password" data-field-global="tokenDraft" value="${esc(state.tokenDraft)}" placeholder="${s.configured ? "••••••••  (paste to replace)" : "ghp_…"}">
-    </label>
-    <label class="field">GitHub API URL
-      <input type="text" data-field-global="apiDraft" value="${esc(state.apiDraft)}" placeholder="https://api.github.com">
-    </label>
-    <div class="row">
-      <button class="btn" data-action="saveToken">Save token</button>
-      ${s.configured ? `<button class="btn ghost" data-action="clearToken">Disconnect</button>` : ""}
-    </div>
-    <p class="meta" style="margin-top:12px">Fine-grained: Contents Read and write. Classic: <code>repo</code>. The token is stored in this app’s <code>/data</code> volume and is never sent back to the browser.</p>
-  </div>
+  return `${renderGithubCard(s)}
   <div class="card" style="margin-top:16px">
     <h3>How sync works</h3>
     <div class="meta">
@@ -909,45 +869,69 @@ function renderSettings() {
   ${renderAppUpdates()}`;
 }
 
-function renderOauthCard(oauth, device) {
-  const builtin = oauth.builtin_device_flow !== false;
-  return `<div class="card oauth-card">
+function renderGithubCard(s) {
+  if (!s.configured) {
+    return `<div class="card">
     <h3>Connect with GitHub</h3>
-    <p class="meta">One-click login — no OAuth App to create and no token to paste. Press the button, open the GitHub link, and enter the short code. This uses the public GitHub CLI OAuth client, the same zero-config flow as the Home Assistant Version Control app.</p>
-    ${builtin ? "" : `<p class="meta" style="color:var(--warn)">GitHub Enterprise: the built-in client only works on github.com. Save your own OAuth App client ID under Advanced, or use a personal access token.</p>`}
-    <label class="field">Permission scope
-      <select data-field-global="oauthScopeDraft">
-        <option value="repo" ${state.oauthScopeDraft === "repo" ? "selected" : ""}>Private and public repositories (repo)</option>
-        <option value="public_repo" ${state.oauthScopeDraft === "public_repo" ? "selected" : ""}>Public repositories only (public_repo)</option>
-      </select>
-    </label>
+    <p class="meta">One-click login — no token to paste. Press the button, open the GitHub link, and enter the short code. The code is copied to your clipboard automatically and this page signs you in as soon as you approve it.</p>
     <div class="row">
-      <button class="btn" data-action="deviceAuth">Connect with GitHub</button>
+      <button class="btn" data-action="authDevice">Authorise with device code</button>
     </div>
-    ${device ? `<div class="oauth-device"><strong>Waiting for GitHub approval</strong><p>Open <a href="${esc(device.verification_uri_complete || device.verification_uri)}" target="_blank" rel="noopener">${esc(device.verification_uri)}</a> and enter <code>${esc(device.user_code)}</code>.</p><p class="meta">This page checks automatically. The code expires in about ${Math.ceil(Number(device.expires_in || 900) / 60)} minutes.</p><button class="btn ghost" data-action="cancelDevice">Cancel</button></div>` : ""}
-    <details class="advanced">
-      <summary>Advanced: your own OAuth App (browser login, GitHub Enterprise)</summary>
-      <p class="meta" style="margin-top:10px">Optional. A custom client ID takes precedence over the built-in one for device login, and is required for browser login and GitHub Enterprise.</p>
-      <div class="oauth-grid">
-        <label class="field">OAuth App client ID
-          <input type="text" data-field-global="oauthClientIdDraft" value="${esc(state.oauthClientIdDraft)}" placeholder="Iv1.…">
-        </label>
-        <label class="field">Client secret <span class="meta">${oauth.client_secret_configured ? "(saved)" : "(required for web login)"}</span>
-          <input type="password" data-field-global="oauthClientSecretDraft" value="${esc(state.oauthClientSecretDraft)}" placeholder="${oauth.client_secret_configured ? "••••••••  (leave blank to keep)" : "enter secret"}">
-        </label>
-      </div>
-      <label class="field">Web OAuth callback URL
-        <input type="text" data-field-global="oauthRedirectDraft" value="${esc(state.oauthRedirectDraft)}" placeholder="${esc(callbackUrl())}">
-      </label>
-      <div class="row">
-        <button class="btn ghost" data-action="useCallback">Use this app’s callback URL</button>
-        <button class="btn ghost" data-action="saveOAuth">Save authorization settings</button>
-        <button class="btn" data-action="webAuth">Authorize in browser</button>
-      </div>
-      <p class="meta" style="margin-top:12px">The OAuth client secret, temporary authorization codes, and final access token stay on the app server and are never returned to the browser. Browser login requires registering the exact callback URL in your OAuth App.</p>
-    </details>
+  </div>`;
+  }
+  return `<div class="card">
+    <h3>GitHub connection</h3>
+    <div class="meta">
+      Signed in as <strong>@${esc(s.username)}</strong><br>
+      Mounts: ${esc((s.roots || []).join(", ") || "none")}<br>
+      Mappings: ${s.mapping_count ?? state.mappings.length}
+    </div>
+    <div class="row">
+      <button class="btn ghost" data-action="switchAccount">Switch account</button>
+      <button class="btn danger" data-action="logout">Log out</button>
+    </div>
+    <p class="meta" style="margin-top:12px">GitHub options and log out are also in the <strong>@${esc(s.username)}</strong> menu in the header. The access token stays in this app's <code>/data</code> volume and is never sent back to the browser.</p>
   </div>`;
 }
+
+function renderUserMenu() {
+  const s = state.status || {};
+  return `<div class="user-menu">
+    <div class="user-menu-head">Signed in as <strong>@${esc(s.username)}</strong></div>
+    <div class="meta" style="margin-bottom:10px">Mappings: ${s.mapping_count ?? state.mappings.length}</div>
+    <button class="btn ghost user-menu-btn" data-action="tab" data-view="settings">GitHub options</button>
+    <button class="btn ghost user-menu-btn" data-action="switchAccount">Switch account</button>
+    <button class="btn danger user-menu-btn" data-action="logout">Log out</button>
+  </div>`;
+}
+
+function renderDevicePopup() {
+  const d = state.devicePopup;
+  if (!d) return "";
+  if (d.status === "error") {
+    return `<div class="overlay"><div class="dialog device-dialog">
+      <h2>Authorization failed</h2>
+      <p class="meta">${esc(d.error || "GitHub authorization was not completed.")}</p>
+      <div class="row">
+        <button class="btn" data-action="cancelDevice">Close</button>
+      </div>
+    </div></div>`;
+  }
+  const link = d.verification_uri_complete || d.verification_uri;
+  return `<div class="overlay"><div class="dialog device-dialog">
+      <h2>Authorise with GitHub</h2>
+      <p class="meta">Open the GitHub link and enter this code${d.copied ? " (already copied to your clipboard)" : ""}:</p>
+      <button class="device-code" data-action="copyCode" title="Copy code">${esc(d.user_code)}</button>
+      <div class="row device-actions">
+        <a class="btn" href="${esc(link)}" target="_blank" rel="noopener">Open GitHub</a>
+        <button class="btn ghost" data-action="copyCode">${d.copied ? "Copied \u2713" : "Copy code"}</button>
+      </div>
+      <p class="meta device-link">${esc(d.verification_uri)}</p>
+      <p class="meta"><span class="spinner-inline"></span> Waiting for approval on GitHub… this popup closes automatically. The code expires in about ${Math.ceil(Number(d.expires_in || 900) / 60)} minutes.</p>
+      <div class="row"><button class="btn ghost" data-action="cancelDevice">Cancel</button></div>
+    </div></div>`;
+}
+
 
 function renderAppUpdates() {
   const up = state.updates || {};
@@ -993,7 +977,8 @@ function render() {
           <img src="assets/icon.png" alt="" width="32" height="32">
           <h1>GitHub Sync</h1>
         </div>
-        ${s.status?.username ? `<span class="user-chip">@${esc(s.status.username)}</span>` : ""}
+        ${s.status?.configured && s.status?.username ? `<div class="user-wrap"><button class="user-chip clickable" data-action="toggleUserMenu" title="GitHub options">@${esc(s.status.username)} ▾</button>${s.userMenuOpen ? renderUserMenu() : ""}</div>` : ""}
+        ${!s.status?.configured ? `<button class="user-chip clickable" data-action="authDevice" title="Connect GitHub">Connect</button>` : ""}
         ${s.status?.version ? `<span class="user-chip" title="Installed version of this app">v${esc(s.status.version)}</span>` : ""}
         <button class="icon-btn" data-action="refresh" title="Refresh">↻</button>
       </header>
@@ -1016,6 +1001,7 @@ function render() {
           ? `<div class="busy updating"><div><div class="spinner"></div><p class="meta" style="text-align:center;margin-top:12px">Updating GitHub Sync…<br>The app restarts with the new version automatically.<br>If this stalls, close and reopen the panel.</p></div></div>`
           : ""
       }
+      ${renderDevicePopup()}
       ${
         s.confirm
           ? `<div class="overlay"><div class="dialog">
@@ -1033,6 +1019,10 @@ function render() {
 }
 
 document.addEventListener("click", (ev) => {
+  if (state.userMenuOpen && !ev.target.closest(".user-wrap")) {
+    setState({ userMenuOpen: false });
+    return;
+  }
   const el = ev.target.closest("[data-action]");
   if (!el) return;
   const action = el.dataset.action;

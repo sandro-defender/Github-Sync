@@ -14,8 +14,8 @@ Requires **Home Assistant OS** or **Supervised**. Container and Core installs do
 
 ## Features
 
-- Connect one GitHub account in one click — zero-config OAuth device flow (built-in GitHub CLI client), or a personal access token. Map many folders.
-- Optional custom OAuth App: browser OAuth flow and GitHub Enterprise support; PAT entry remains available as a fallback.
+- Connect one GitHub account in one click — **Authorise with device code**: a popup shows the code (auto-copied to the clipboard) and the github.com approval link. Map many folders.
+- Clickable `@username` in the header opens the GitHub menu (options, switch account, log out).
 - File browser over Supervisor mounts (`homeassistant`, `share`, `media`, `backup`, `addons`, `addon_configs`).
 - Search repositories the token can access, or type `owner/name`.
 - Separate **upload ignore** and **download ignore** lists (gitignore syntax).
@@ -31,34 +31,20 @@ Requires **Home Assistant OS** or **Supervised**. Container and Core installs do
 - Check for updates can flag **conflicts** after you have synced at least once (local and remote both changed since last sync).
 - Branded App Store icon and repository banner, plus the same icon in the Ingress UI.
 
-## Token permissions
+## GitHub permissions
 
-**Fine-grained token (recommended)**
+Sign-in uses GitHub's OAuth **device flow** with the `repo` scope (private and public repositories), so the app can read and write the repositories you map. Approve the code on github.com and the app signs you in automatically — no token to create or paste.
 
-- Repository access: only the repos you will sync
-- Permissions: **Contents → Read and write**, **Metadata → Read**
+## GitHub authorization
 
-**Classic token**
+Settings has a single **Authorise with device code** button (also in the header when signed out, and on the empty Mappings page). Press it and a popup shows:
 
-- Scope: `repo` (or `public_repo` for public repositories only)
+- the short code — already copied to your clipboard (click it to copy again),
+- an **Open GitHub** button with the approval link.
 
-GitHub Enterprise: set the API URL in Settings (for example `https://github.example.com/api/v3`).
+Approve on github.com and the popup closes by itself, signed in. While signed in, the `@username` chip in the header opens the GitHub menu: **GitHub options**, **Switch account**, and **Log out**.
 
-## Automatic GitHub authorization
-
-Settings leads with **Connect with GitHub** — a zero-config OAuth **device flow**: press the button, open the GitHub link it shows, and enter the short code. No OAuth App to create, no callback URL, no token to paste. It uses the public GitHub CLI OAuth client ID (the same approach as the Home Assistant Version Control app); client IDs are public identifiers, not secrets, and the device flow needs no client secret at all.
-
-Choose the scope first:
-
-- **Private and public repositories (`repo`)** for the same repository access as the classic PAT workflow.
-- **Public repositories only (`public_repo`)** when private repositories are not needed.
-
-Optional, under **Advanced**:
-
-- **Your own OAuth App** — enter a client ID (takes precedence over the built-in client for device login) and, for **Authorize in browser**, the client secret and the exact callback URL registered in the OAuth App.
-- **GitHub Enterprise** — the built-in client only works on github.com; point the API URL at your Enterprise host and save your own locally registered OAuth App client ID, or use a personal access token.
-
-The OAuth client secret, temporary codes, and resulting access token stay in the app's `/data` storage or server-side flow state; they are never returned to the browser. Device authorization is also the easiest option behind Home Assistant Ingress. GitHub Enterprise OAuth endpoints are derived from the configured API host when the Enterprise server supports the same OAuth paths. PAT entry remains available in Settings for people who prefer it.
+The flow uses the public GitHub CLI OAuth client ID (the same approach as the Home Assistant Version Control app); client IDs are public identifiers, not secrets, and the device flow needs no client secret at all. Temporary codes stay in server-side flow state and the resulting access token stays in the app's `/data` storage; neither is ever returned to the browser.
 
 ## Installation
 
@@ -67,7 +53,7 @@ The OAuth client secret, temporary codes, and resulting access token stay in the
    `https://github.com/sandro-defender/Github-Sync`
 3. Find **GitHub Sync** under the new repository and **Install**.
 4. Start the app. Open **GitHub Sync** in the sidebar (or **Open Web UI** on the app page).
-5. Settings → either paste a token, or configure **Automatic GitHub authorization** and use device-code/browser login.
+5. Press **Authorise with device code**, approve the code on github.com, then map folders.
 
 Local development copy: put this repository’s `github_sync/` folder into `/addons/github_sync` on the HA host, then **Check for updates** in the App store. It appears under **Local apps**.
 
@@ -111,7 +97,7 @@ New mappings exclude runtime and secrets from **upload**:
 - Files larger than 50 MB are skipped.
 - **Upload with an empty repo path replaces the repository tree** with the folder contents. Keep a README in the repo by putting it in the local folder or setting **repo path** (for example `homeassistant/`) so the rest of the repo is preserved.
 - Download keeps extra local files by default. The confirmation dialog has an explicit **Delete local extras** checkbox; only enable it when the local folder should mirror the remote tree. Download-ignore rules still protect ignored files. The API also accepts `delete_extras`.
-- Access tokens and OAuth client secrets are stored in the app `/data` volume and are never returned by the API.
+- The access token (obtained via device authorization) is stored in the app `/data` volume and is never returned by the API.
 
 ## App updates
 
@@ -131,7 +117,7 @@ Note: the Supervisor intentionally forbids an app from updating *itself* directl
 | --- | --- |
 | Log level | `trace`, `debug`, `info`, `warning`, `error` |
 
-GitHub credentials and OAuth App settings are configured in the app UI, not in the Supervisor options form.
+GitHub sign-in happens in the app UI (device code), not in the Supervisor options form.
 
 Automatic sync runs inside the app process (every 30 seconds it checks which mappings are due). The Home Assistant instance must keep the app **started**. Check-only auto-sync never writes; it notifies if files differ.
 
