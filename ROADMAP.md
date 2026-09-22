@@ -21,14 +21,14 @@ Requires **Home Assistant OS** or **Supervised** (Apps are not available on Cont
 
 **Session branch:** `arena/01a0c6e1-github-sync` (stay on the branch provided by your Arena session).
 **Base version:** `0.3.1` in config.yaml, Dockerfile and version.py. Release automation bumps all three on merge.
-**Current work:** Supervisor 403 fix complete (correct URL + response envelope, fallback/recovery tests); configurable GitHub access and dry-run previews are in progress.
-**Validation:** 59 unit tests passing after the update-check fix. Local Python environment: `.venv`.
+**Current work:** Supervisor 403 fix complete (correct URL + response envelope, fallback/recovery tests); configurable GitHub access complete; dry-run previews are in progress.
+**Validation:** 72 unit tests passing after access controls. Local Python environment: `.venv`.
 
 **What works today**
 
 - Install as a custom App store repository (`repository.yaml` + `github_sync/`).
 - Ingress sidebar: token, mappings, file browser, gitignore editor, Check / Upload / Download.
-- **Device-only GitHub login**: a single **Authorise with device code** button opens a popup with the code (auto-copied to the clipboard) and the github.com approval link; it signs in automatically on approval. No PAT, no OAuth App, no scope picker, no Enterprise support. Signed-in header shows a clickable `@username` menu (GitHub options, switch account, log out); a **Connect** chip shows when signed out. Legacy `oauth` config in `/data` is dropped on load.
+- **Configurable GitHub access:** choose read-only/read-write and selected repositories before device login; choose OAuth scope, or connect a fine-grained token for GitHub-enforced restrictions. OAuth allowlists are explicitly labelled app-enforced. Settings can narrow existing connections; policies cover manual/automatic operations and Git Data writes. Legacy connections remain unrestricted until configured. Logout clears local credentials, not GitHub grants.
 - Conflict snapshots (`last_sync.file_shas`) capped at 5000 entries with a `file_shas_truncated` flag (roadmap item done).
 - `store.py` mapping helpers fixed (`_public_last_sync`, `_interval`, `_direction` were missing and crashed saves/lists) and covered by `tests/test_store.py`.
 - Auto-sync per mapping (15 min / hourly / 6h / daily; upload, download, or check-only).
@@ -49,7 +49,7 @@ Requires **Home Assistant OS** or **Supervised** (Apps are not available on Cont
 
 **Next work (Phase 10)**
 
-1. Dry-run mode that never writes.
+1. Dry-run mode that never writes — in progress in this session.
 2. Publish multi-arch images and set `image:` in `config.yaml` so Supervisor does not local-build.
 3. ~~Cap or prune `file_shas` snapshots if `/data/github_sync.json` grows large~~ — done (`MAX_FILE_SHAS = 5000`, truncation flag).
 4. Translations beyond English for Supervisor options.
@@ -186,6 +186,8 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 
 ## Phase 11 — Hardening & release readiness
 
+- [x] Configurable GitHub access, explicit OAuth limitations, optional fine-grained token, server-side enforcement and tests.
+
 - [ ] Dry-run mode that never writes.
 - [ ] Publish multi-arch images and set `image:` in `config.yaml` so Supervisor does not local-build.
 - [x] Cap or prune `file_shas` snapshots if `/data/github_sync.json` grows large.
@@ -207,7 +209,7 @@ github_sync/
     main.py                     FastAPI + Ingress
     store.py                    /data/github_sync.json
     github_client.py
-    oauth.py                    GitHub OAuth device flow only (built-in client, no options)
+    oauth.py                    GitHub device flow with selectable scopes and flow-bound access policy
     ignore.py
     paths.py
     sync.py
@@ -222,7 +224,7 @@ tests/                          unittest, PYTHONPATH=github_sync/app
 
 **Data** (`/data/github_sync.json`)
 
-- `access_token`, `api_base`, `username`, `user_id`
+- `access_token`, `api_base`, `username`, `user_id`, `access` (read/write mode and repository allowlist), `auth_method`, `requested_scope`
 - `mappings[]`: folder, repo, ignore rules, auto_sync, last_sync (including private `file_shas`, capped at 5000 entries)
 - `update_check`: last update-check timestamp, latest version seen, and the version already notified about
 

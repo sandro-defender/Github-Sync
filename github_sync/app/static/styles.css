@@ -204,3 +204,6 @@ table.diff th, table.diff td { text-align: left; padding: 6px 8px; border-bottom
 .tag.del { background: rgba(244,67,54,.2); color: var(--err); }
 .tag.conflict { background: rgba(156,39,176,.2); color: #ce93d8; }
 code { font-size: 12px; }
+
+/* Keep access options usable on small Ingress panels. */
+.auth-dialog { max-height: 85vh; overflow-y: auto; width: min(620px, 94vw); }

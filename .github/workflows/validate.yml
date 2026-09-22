@@ -21,3 +21,15 @@ jobs:
         uses: frenck/action-addon-linter@v2
         with:
           path: "./github_sync"
+
+  tests:
+    name: Python and frontend checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r tests/requirements.txt
+      - run: PYTHONPATH=github_sync/app python -m unittest discover -s tests -v
+      - run: node --check github_sync/app/static/app.js

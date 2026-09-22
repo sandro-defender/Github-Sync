@@ -1,4 +1,4 @@
-"""Device-flow OAuth broker tests (the only sign-in method)."""
+"""Device-flow OAuth broker tests."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import sys
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "github_sync" / "app"))
 
@@ -66,6 +66,24 @@ class OAuthTests(unittest.TestCase):
         broker = OAuthBroker()
         with self.assertRaises(OAuthError):
             asyncio.run(broker.start_device(session))
+
+    def test_selected_scope_and_policy_stay_with_flow(self) -> None:
+        access = {"mode": "read", "repositories": ["Owner/Repo"]}
+        for scope, expected in (("public_read", ""), ("public_write", "public_repo"), ("repo", "repo")):
+            broker = OAuthBroker()
+            with patch("oauth._post_form", new_callable=AsyncMock) as post:
+                post.return_value = {"device_code": "dev", "user_code": "CODE"}
+                started = asyncio.run(broker.start_device(AsyncMock(), scope=scope, access=access))
+                self.assertEqual(post.call_args.args[2]["scope"], expected)
+                self.assertNotIn("device_code", started)
+                post.return_value = {"access_token": "secret"}
+                authorized = asyncio.run(broker.poll_device(AsyncMock(), started["flow_id"]))
+                self.assertEqual(authorized["access"], {"mode": "read", "repositories": ["owner/repo"]})
+                self.assertEqual(authorized["scope"], scope)
+
+    def test_invalid_scope_never_contacts_github(self) -> None:
+        with self.assertRaises(OAuthError):
+            asyncio.run(OAuthBroker().start_device(AsyncMock(), scope="admin:org"))
 
     def test_poll_unknown_flow_raises(self) -> None:
         broker = OAuthBroker()

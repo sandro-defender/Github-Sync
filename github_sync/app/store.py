@@ -95,8 +95,7 @@ class Store:
             self.data.update(loaded)
             self.data.setdefault("mappings", [])
             self.data.setdefault("api_base", GITHUB_API_BASE)
-            # Legacy config from when PAT / custom OAuth Apps were supported.
-            # Device authorization is now the only sign-in method.
+            # Drop obsolete custom OAuth App settings (not the access policy).
             self.data.pop("oauth", None)
 
     async def save(self) -> None:
@@ -117,6 +116,9 @@ class Store:
             "username": self.data.get("username"),
             "user_id": self.data.get("user_id"),
             "api_base": self.data.get("api_base") or GITHUB_API_BASE,
+            "access": self.data.get("access"),
+            "auth_method": self.data.get("auth_method"),
+            "requested_scope": self.data.get("requested_scope"),
             "mapping_count": len(self.data.get("mappings") or []),
             "defaults": {
                 "ignore_upload": DEFAULT_IGNORE_UPLOAD,
@@ -207,7 +209,10 @@ class Store:
         ]
         await self.save()
 
-    async def set_token(self, token: str, username: str | None, user_id: Any) -> None:
+    async def set_token(self, token: str, username: str | None, user_id: Any, *, access: dict[str, Any] | None = None, auth_method: str = "device", requested_scope: str | None = None) -> None:
+        self.data["access"] = access
+        self.data["auth_method"] = auth_method
+        self.data["requested_scope"] = requested_scope
         self.data["access_token"] = token
         self.data["api_base"] = GITHUB_API_BASE
         self.data["username"] = username
@@ -215,6 +220,9 @@ class Store:
         await self.save()
 
     async def clear_token(self) -> None:
+        self.data["access"] = None
+        self.data["auth_method"] = None
+        self.data["requested_scope"] = None
         self.data["access_token"] = ""
         self.data["username"] = None
         self.data["user_id"] = None

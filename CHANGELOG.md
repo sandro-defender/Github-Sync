@@ -23,6 +23,14 @@ All notable changes to GitHub Sync are documented here.
 
 ## [Unreleased]
 
+### GitHub access controls (current session)
+
+- Choose read-only vs read/write operations and an explicit repository allowlist before authorizing. Select device OAuth scope (`public_read`, `public_write`, `repo`); the flow keeps its policy server-side so polling cannot widen it.
+- Add an optional fine-grained token connection for **GitHub-enforced** selected-repository/Contents permissions. Clearly explain that device OAuth scopes are broader and app limits do not restrict the grant itself.
+- Enforce policies server-side for manual and scheduled sync, repository/branch browsing, mapping creation and Git Data writes; reject unsafe API paths and cross-host credential forwarding. Empty allowlists deny all repositories; legacy connections keep existing access until configured.
+- Persist non-secret policy metadata, allow changing limits in Settings, reset policy on logout and clear account-specific UI caches. Tokens are never echoed by the API or kept in frontend state.
+- Add authorization/API regression coverage and a Python test CI job alongside App metadata linting.
+
 ### Fixed (current session)
 
 - Correct the Supervisor self-info URL (remove `/api`), unwrap the real `result`/`data` response, and accept repository-prefixed app slugs. No elevated Supervisor API permission is needed.
@@ -38,11 +46,11 @@ All notable changes to GitHub Sync are documented here.
 
 ### Changed
 
-- Device authorization is now the only sign-in method — no configuration options, no scope picker. `POST api/oauth/device/start` needs no setup; legacy `oauth` config in `/data` is dropped on load.
+- Previous release: device authorization became the only sign-in method — superseded by the access controls above. `POST api/oauth/device/start` needs no setup; legacy `oauth` config in `/data` is dropped on load.
 
 ### Removed
 
-- Personal access token entry (`POST api/token`), custom OAuth App settings (`POST api/oauth/config`), browser OAuth flow (`POST api/oauth/web/start`, `GET api/oauth/callback`), scope picker, and GitHub Enterprise API URL support.
+- Previous release: personal access token entry (`POST api/token`, now restored for fine-grained tokens only), custom OAuth App settings (`POST api/oauth/config`), browser OAuth flow (`POST api/oauth/web/start`, `GET api/oauth/callback`), scope picker, and GitHub Enterprise API URL support.
 
 ### Fixed
 

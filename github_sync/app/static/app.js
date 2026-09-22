@@ -51,6 +51,7 @@ const state = {
   diff: null,
   confirm: null,
   devicePopup: null,
+  authSetup: null,
   userMenuOpen: false,
   updates: {},
   updating: false,
@@ -261,14 +262,19 @@ async function onAction(action, el) {
   }
   if (action === "dismissUpdate") return dismissUpdate((state.updates || {}).latest_version);
   if (action === "checkUpdates") return checkUpdatesNow();
-  if (action === "authDevice") return startDeviceAuth();
+  if (action === "authDevice") return openAuthSetup();
+  if (action === "manageAccess") return openAuthSetup(true);
+  if (action === "closeAuthSetup") return setState({ authSetup: null });
+  if (action === "startSelectedAuth") return startDeviceAuth();
+  if (action === "connectToken") return connectToken();
+  if (action === "saveAccess") return saveAccess();
   if (action === "copyCode") return copyDeviceCode();
   if (action === "cancelDevice") return cancelDeviceAuth();
   if (action === "toggleUserMenu") return setState({ userMenuOpen: !state.userMenuOpen });
   if (action === "logout") return logout();
   if (action === "switchAccount") {
     setState({ userMenuOpen: false });
-    return startDeviceAuth();
+    return openAuthSetup();
   }
 }
 
@@ -503,13 +509,53 @@ async function copyTextToClipboard(text) {
   }
 }
 
+function openAuthSetup(editing = false) {
+  const access = state.status.access;
+  setState({ userMenuOpen: false, error: null, authSetup: {
+    editing,
+    mode: access?.mode || "read",
+    scope: state.status.requested_scope || "public_read",
+    repositories: (access?.repositories || []).join("\n"),
+  } });
+}
+
+function selectedAccess() {
+  return {
+    mode: state.authSetup.mode,
+    repositories: state.authSetup.repositories.split(/[\n,]+/).map(s => s.trim()).filter(Boolean),
+  };
+}
+
+async function saveAccess() {
+  const access = selectedAccess();
+  try {
+    const status = await run("Saving access limits…", () => api("api/access", { method: "POST", body: JSON.stringify(access) }));
+    setState({ status, authSetup: null, repos: null, branches: [] });
+    toast("GitHub access limits saved");
+  } catch (_err) { /* stored */ }
+}
+
+async function connectToken() {
+  const field = document.getElementById("github-token");
+  const token = field?.value || "";
+  if (field) field.value = "";
+  const access = selectedAccess();
+  try {
+    await run("Connecting GitHub…", () => api("api/token", { method: "POST", body: JSON.stringify({ token, access }) }));
+    setState({ authSetup: null, repos: null, branches: [] });
+    await refresh();
+  } catch (_err) { /* token is deliberately not kept in UI state */ }
+}
+
 async function startDeviceAuth() {
-  if (state.devicePopup) return;
+  if (state.devicePopup || !state.authSetup) return;
+  const options = { scope: state.authSetup.scope, access: selectedAccess() };
   try {
     const device = await run("Starting GitHub authorization…", () =>
-      api("api/oauth/device/start", { method: "POST" })
+      api("api/oauth/device/start", { method: "POST", body: JSON.stringify(options) })
     );
     setState({
+      authSetup: null,
       devicePopup: { ...device, status: "pending", copied: false, error: null },
     });
     const copied = await copyTextToClipboard(device.user_code);
@@ -546,7 +592,7 @@ async function pollDeviceAuth(flowId, delay) {
         pollDeviceAuth(flowId, Math.max(1000, (result.retry_after || 5) * 1000));
         return;
       }
-      setState({ devicePopup: null });
+      setState({ devicePopup: null, repos: null, branches: [] });
       toast(`GitHub authorized as @${result.account?.username || "user"}`);
       await refresh();
     } catch (err) {
@@ -571,7 +617,7 @@ async function cancelDeviceAuth() {
 async function logout() {
   try {
     await run("Signing out…", () => api("api/token", { method: "DELETE" }));
-    setState({ userMenuOpen: false });
+    setState({ userMenuOpen: false, repos: null, branches: [], authSetup: null });
     toast("Signed out from GitHub");
     await refresh();
   } catch (_err) {
@@ -882,7 +928,7 @@ function renderGithubCard(s) {
   if (!s.configured) {
     return `<div class="card">
     <h3>Connect with GitHub</h3>
-    <p class="meta">One-click login — no token to paste. Press the button, open the GitHub link, and enter the short code. The code is copied to your clipboard automatically and this page signs you in as soon as you approve it.</p>
+    <p class="meta">Choose repository and write access first, then use a device code or a fine-grained token. With a device code, open the GitHub link and enter the short code. The code is copied to your clipboard automatically and this page signs you in as soon as you approve it.</p>
     <div class="row">
       <button class="btn" data-action="authDevice">Authorise with device code</button>
     </div>
@@ -890,6 +936,8 @@ function renderGithubCard(s) {
   }
   return `<div class="card">
     <h3>GitHub connection</h3>
+    <p class="meta">${s.access ? `${s.access.mode === "write" ? "Read/write" : "Read-only GitHub access"} · ${s.access.repositories.length} selected repositories` : "Legacy connection: unrestricted app access. Choose access limits below."}</p>
+    <div class="row"><button class="btn" data-action="manageAccess">Repository &amp; write access</button></div>
     <div class="meta">
       Signed in as <strong>@${esc(s.username)}</strong><br>
       Mounts: ${esc((s.roots || []).join(", ") || "none")}<br>
@@ -912,6 +960,46 @@ function renderUserMenu() {
     <button class="btn ghost user-menu-btn" data-action="switchAccount">Switch account</button>
     <button class="btn danger user-menu-btn" data-action="logout">Log out</button>
   </div>`;
+}
+
+function renderAuthSetup() {
+  const a = state.authSetup;
+  if (!a) return "";
+  return `<div class="overlay"><div class="dialog auth-dialog" role="dialog" aria-modal="true" aria-label="GitHub access">
+    <h2>${a.editing ? "GitHub access limits" : "Choose GitHub access"}</h2>
+    <p class="meta">These limits are enforced by this app for manual and automatic sync. Read-only blocks GitHub uploads; downloads can still write local files.</p>
+    <label class="field">GitHub operations
+      <select data-auth-field="mode">
+        <option value="read" ${a.mode === "read" ? "selected" : ""}>Read-only (check and download)</option>
+        <option value="write" ${a.mode === "write" ? "selected" : ""}>Read and write (also upload)</option>
+      </select>
+    </label>
+    <label class="field">Selected repositories — owner/name, one per line
+      <textarea data-auth-field="repositories" placeholder="your-name/home-assistant">${esc(a.repositories)}</textarea>
+    </label>
+    <p class="meta">Only these repositories can be synced. An empty list allows none. This does not grant rights your GitHub account or token does not have.</p>
+    ${a.editing ? `<button class="btn" data-action="saveAccess">Save access limits</button>` : `
+    <label class="field">Device-code OAuth scope
+      <select data-auth-field="scope">
+        <option value="public_read" ${a.scope === "public_read" ? "selected" : ""}>Public repositories — read (no repository scope)</option>
+        <option value="public_write" ${a.scope === "public_write" ? "selected" : ""}>Public repositories — read/write (public_repo)</option>
+        <option value="repo" ${a.scope === "repo" ? "selected" : ""}>Public and private repositories (repo)</option>
+      </select>
+    </label>
+    <p class="warning-text">GitHub OAuth scopes apply broadly, NOT only to the repositories above. GitHub has no read-only private-repo OAuth scope, and an existing GitHub CLI grant may be broader. The app limits above do not narrow the token itself.</p>
+    <button class="btn" data-action="startSelectedAuth">Continue with device code</button>
+    <details style="margin-top:16px"><summary>Restrict permissions on GitHub itself (fine-grained token)</summary>
+      <p class="meta">On GitHub select a resource owner, <strong>Only select repositories</strong>, and your repositories. Set <strong>Contents</strong> to Read-only or Read and write; Metadata read access is automatic. Workflow uploads additionally need Workflows write permission. Set an expiration. Organization approval may be required.</p>
+      <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">Create a fine-grained token on GitHub ↗</a>
+      <label class="field">Fine-grained token (stored only by this app, never returned)
+        <input id="github-token" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_…">
+      </label>
+      <button class="btn" data-action="connectToken">Connect with token</button>
+    </details>`}
+    ${state.error ? `<p class="warning-text">${esc(state.error)}</p>` : ""}
+    <p class="meta">Changing app limits or logging out does not revoke GitHub grants. Revoke or narrow them in GitHub Settings → Applications / Developer settings.</p>
+    <div class="row"><button class="btn ghost" data-action="closeAuthSetup">Cancel</button></div>
+  </div></div>`;
 }
 
 function renderDevicePopup() {
@@ -1011,6 +1099,7 @@ function render() {
           ? `<div class="busy updating"><div><div class="spinner"></div><p class="meta" style="text-align:center;margin-top:12px">Updating GitHub Sync…<br>The app restarts with the new version automatically.<br>If this stalls, close and reopen the panel.</p></div></div>`
           : ""
       }
+      ${renderAuthSetup()}
       ${renderDevicePopup()}
       ${
         s.confirm
@@ -1041,6 +1130,7 @@ document.addEventListener("click", (ev) => {
 });
 
 document.addEventListener("input", (ev) => {
+  if (ev.target.dataset.authField && state.authSetup) state.authSetup[ev.target.dataset.authField] = ev.target.value;
   const field = ev.target.dataset.field;
   if (field && state.editor) state.editor[field] = ev.target.value;
   if (ev.target.dataset.fieldGlobal) state[ev.target.dataset.fieldGlobal] = ev.target.value;
@@ -1051,6 +1141,7 @@ document.addEventListener("input", (ev) => {
 });
 
 document.addEventListener("change", (ev) => {
+  if (ev.target.dataset.authField && state.authSetup) state.authSetup[ev.target.dataset.authField] = ev.target.value;
   if (ev.target.dataset.field && state.editor) {
     state.editor[ev.target.dataset.field] = ev.target.value;
   }
