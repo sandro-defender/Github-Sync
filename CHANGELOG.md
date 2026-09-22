@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.2.1] - 2026-09-22
+
+- Add GitHub OAuth authorization choices
+
 All notable changes to GitHub Sync are documented here.
 
 ## [Unreleased]
