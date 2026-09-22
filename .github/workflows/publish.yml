@@ -88,24 +88,46 @@ jobs:
         id: normalize
         env:
           INFO_IMAGE: ${{ steps.info.outputs.image }}
+          INFO_VERSION: ${{ steps.info.outputs.version }}
+          INFO_NAME: ${{ steps.info.outputs.name }}
+          INFO_DESCRIPTION: ${{ steps.info.outputs.description }}
           INFO_URL: ${{ steps.info.outputs.url }}
         run: |
           set -euo pipefail
+
+          # The `info` helper reads config.yaml with `yq -o=json`, so every
+          # scalar arrives JSON-quoted ("ghcr.io/..." ). Interpolating it into a
+          # command would let the shell strip those quotes, but values passed
+          # through `env:` keep them — which produced image tags like
+          # '"ghcr.io/owner/amd64-app":1.0.0' and broke buildx.
+          unquote() {
+            local value="$1"
+            value="${value%\"}"
+            value="${value#\"}"
+            printf '%s' "${value}"
+          }
+
+          image="$(unquote "${INFO_IMAGE}")"
+          version="$(unquote "${INFO_VERSION}")"
+          name="$(unquote "${INFO_NAME}")"
+          description="$(unquote "${INFO_DESCRIPTION}")"
+          url="$(unquote "${INFO_URL}")"
+
           # Prefer the image from config.yaml; fall back to the registry
-          # convention so the pipeline works before `image:` is enabled.
-          image="${INFO_IMAGE}"
+          # convention so the pipeline also works before `image:` is enabled.
           if [[ -z "${image}" || "${image}" == "null" ]]; then
             image="${REGISTRY_PREFIX}/${IMAGE_NAME}"
           fi
+
           echo "image_name=${image##*/}" >> "$GITHUB_OUTPUT"
           echo "registry_prefix=${image%/*}" >> "$GITHUB_OUTPUT"
-          echo "version=${{ steps.info.outputs.version }}" >> "$GITHUB_OUTPUT"
-          echo "name=${{ steps.info.outputs.name }}" >> "$GITHUB_OUTPUT"
-          echo "description=${{ steps.info.outputs.description }}" >> "$GITHUB_OUTPUT"
-          if [[ -n "${INFO_URL}" && "${INFO_URL}" != "null" ]]; then
-            echo "url=${INFO_URL}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          echo "name=${name}" >> "$GITHUB_OUTPUT"
+          echo "description=${description}" >> "$GITHUB_OUTPUT"
+          if [[ -n "${url}" && "${url}" != "null" ]]; then
+            echo "url=${url}" >> "$GITHUB_OUTPUT"
           fi
-          echo "Publishing ${image}:${{ steps.info.outputs.version }}"
+          echo "Publishing ${image}:${version}"
 
       - name: Prepare multi-arch matrix
         id: matrix

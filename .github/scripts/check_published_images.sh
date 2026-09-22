@@ -37,12 +37,18 @@ check() { # repository tag label
     printf '  \033[32m✓\033[0m %-46s %s\n' "${label}" "${tag}"
     return 0
   fi
+  if [[ "${code}" == "401" || "${code}" == "403" ]]; then
+    printf '  \033[33m!\033[0m %-46s %s (HTTP %s — package is private)\n' "${label}" "${tag}" "${code}"
+    NEEDS_PUBLIC=1
+    return 1
+  fi
   printf '  \033[31m✗\033[0m %-46s %s (HTTP %s)\n' "${label}" "${tag}" "${code}"
   return 1
 }
 
 echo "Checking GHCR images for version ${VERSION}:"
 status=0
+NEEDS_PUBLIC=0
 check "${OWNER}/${IMAGE}" "${VERSION}" "manifest ${OWNER}/${IMAGE}" || status=1
 check "${OWNER}/${IMAGE}" latest "manifest ${OWNER}/${IMAGE} (latest)" || status=1
 check "${OWNER}/aarch64-${IMAGE}" "${VERSION}" "arch image aarch64-${IMAGE}" || status=1
@@ -58,6 +64,25 @@ github_sync/config.yaml:
 
 then commit and ship a patch release.
 EOF
+elif [[ ${NEEDS_PUBLIC} -eq 1 ]]; then
+  cat <<EOF
+
+The registry answered 401/403: the packages exist but are **private**, and
+GitHub creates container packages as private by default. Supervisor pulls
+anonymously, so installs fail with "unauthorized" until they are public.
+
+Fix it once per package in the browser (there is no API for visibility):
+
+  https://github.com/users/${OWNER}/packages/container/package/${IMAGE}
+  https://github.com/users/${OWNER}/packages/container/package/aarch64-${IMAGE}
+  https://github.com/users/${OWNER}/packages/container/package/amd64-${IMAGE}
+
+  Each page → Package settings → Danger Zone → Change visibility → Public
+
+Then re-run this script; it must print a green ✓ for all four lines before
+github_sync/config.yaml keeps its image: field.
+EOF
+  exit 1
 else
   cat <<EOF
 

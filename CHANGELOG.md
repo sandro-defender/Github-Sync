@@ -2,12 +2,18 @@
 
 ## [0.4.0] - 2026-09-22
 
+Shipped in pull request #7 (merge commit `8d31027`). The publish workflow
+uploaded `ghcr.io/sandro-defender/{arch}-github_sync` and the multi-arch
+`ghcr.io/sandro-defender/github_sync` manifests tagged `0.4.0` and `latest`.
+
+#### Commits
+
 - fix(release): publish the app image after the version bump, not before
 - docs(roadmap): record that the image pipeline builds both architectures in CI
 - ci(publish): build the app image on pull requests too
 - feat(ui): rebuild the sidebar panel with Preact + signals and ship store-readiness work
 
-## [Unreleased]
+#### Details
 
 ### Modern sidebar UI (current session)
 
@@ -84,6 +90,16 @@
 - Added an explicit **Delete local files that are not present in GitHub** checkbox to the Download confirmation dialog. It is off by default and still respects download-ignore rules.
 
 ### Changed
+
+## [Unreleased]
+
+### Release follow-up (current session)
+
+- **Installs now use the published image.** `github_sync/config.yaml` pins `image: "ghcr.io/sandro-defender/github_sync"`, the multi-arch manifest published for 0.4.0, so installing or updating downloads the app instead of building it on your Home Assistant machine.
+- **Changelog structure tidied**: the detailed notes for the UI rewrite and store work now live in the `[0.4.0]` section (commit list plus explanations) instead of a floating `[Unreleased]` block, and `[Unreleased]` is empty for the next session.
+- Image tags follow the version in `config.yaml` (the release workflow dispatches the publish *after* the bump). Right after a version bump the registry tag can lag by a few minutes; a failed install in that window is safe to retry.
+- **GHCR visibility is now documented and checked**: GitHub creates container packages as private, which would make Supervisor's anonymous pull fail with `unauthorized`; `check_published_images.sh` recognises 401/403, prints the exact “Change visibility → Public” links, and `docs/store-submission.md` lists it as the step before enabling `image:`.
+- **Fixed the publish pipeline once `image:` exists**: the `info` helper returns JSON-quoted scalars, and quotes passed through `env:` are not interpreted by the shell, so buildx saw tags like `"ghcr.io/sandro-defender/amd64-github_sync":0.4.0` and failed with “invalid reference format”. The prepare step now normalises all helper outputs itself (the pull-request build mode caught this before it could reach users).
 
 ## [0.3.2] - 2026-09-22
 

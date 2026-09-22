@@ -66,9 +66,10 @@ Signed in, use **Settings → Repository & write access** to change the app limi
 
 Local development copy: put this repository’s `github_sync/` folder into `/addons/github_sync` on the HA host, then **Check for updates** in the App store. It appears under **Local apps**.
 
-Until the pre-built image is enabled (see [Releases](#releases)), Supervisor
-builds the app on your Home Assistant machine the first time you install it —
-that takes a few minutes and needs a working internet connection.
+The app manifest pins a pre-built multi-arch image, so installing or updating
+just downloads it (no compilation on your Home Assistant machine). Fresh
+releases may take a couple of minutes to appear in the registry after a merge —
+retry the install if it fails with “manifest unknown”.
 
 ## Using the sidebar
 
@@ -212,10 +213,11 @@ Merges to `main` publish a GitHub Release (`.github/workflows/release.yml`). Sup
 
 `.github/workflows/publish.yml` builds the multi-arch app image and pushes it to
 GHCR so installs and updates download a pre-built image instead of compiling on
-your Home Assistant machine. It becomes active for users once
-`image: "ghcr.io/sandro-defender/github_sync"` is added to
-`github_sync/config.yaml` — verify with
-`.github/scripts/check_published_images.sh <version>` first. Store-listing
+your Home Assistant machine. It runs for pull requests in build-only mode, and
+`release.yml` dispatches it after each version bump so the image tag always
+matches `version:`. `github_sync/config.yaml` then points at the multi-arch
+manifest with `image: "ghcr.io/sandro-defender/github_sync"`; verify a new tag
+with `.github/scripts/check_published_images.sh <version>`. Store-listing
 requirements and the submission checklist live in
 [`docs/store-submission.md`](docs/store-submission.md).
 
