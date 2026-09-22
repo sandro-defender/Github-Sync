@@ -98,6 +98,7 @@ uploaded `ghcr.io/sandro-defender/{arch}-github_sync` and the multi-arch
 - **Installs now use the published image.** `github_sync/config.yaml` pins `image: "ghcr.io/sandro-defender/github_sync"`, the multi-arch manifest published for 0.4.0, so installing or updating downloads the app instead of building it on your Home Assistant machine.
 - **Changelog structure tidied**: the detailed notes for the UI rewrite and store work now live in the `[0.4.0]` section (commit list plus explanations) instead of a floating `[Unreleased]` block, and `[Unreleased]` is empty for the next session.
 - Image tags follow the version in `config.yaml` (the release workflow dispatches the publish *after* the bump). Right after a version bump the registry tag can lag by a few minutes; a failed install in that window is safe to retry.
+- **Fixed the publish pipeline once `image:` exists**: the `info` helper returns JSON-quoted scalars, and quotes passed through `env:` are not interpreted by the shell, so buildx saw tags like `"ghcr.io/sandro-defender/amd64-github_sync":0.4.0` and failed with “invalid reference format”. The prepare step now normalises all helper outputs itself (the pull-request build mode caught this before it could reach users).
 
 ## [0.3.2] - 2026-09-22
 

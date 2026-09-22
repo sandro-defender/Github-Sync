@@ -213,7 +213,7 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 - [x] Render-based frontend test suite (`tests/test_frontend.cjs` + `tests/dom_stub.cjs`) and ESM syntax checks in CI.
 - [x] Multi-arch publish workflow and image verification script.
 - [x] Store artwork normalisation script and de/es/fr/it option translations.
-- [x] Pull-request build mode: both architectures build in CI without pushing.
+- [x] Pull-request build mode: both architectures build in CI without pushing (it caught the JSON-quoted `image:` regression before merge).
 - [x] First GHCR publish run (0.4.0, both architectures + manifest).
 - [ ] Enable `image:` in `config.yaml` — change prepared in this session's follow-up PR; merge after the registry check passes. Expect a short (<5 min) window right after that merge where a new release's image is still building.
 - [ ] Device verification checklist on a real Home Assistant installation.
