@@ -1,0 +1,6 @@
+configuration:
+  log_level:
+    name: Log-Level
+    description: Wie ausführlich GitHub Sync protokolliert. Die automatische Ordnersynchronisierung wird in der Seitenleiste von GitHub Sync konfiguriert, nicht hier.
+network:
+  8099/tcp: Ingress-Weboberfläche (wird von Home Assistant verwaltet).

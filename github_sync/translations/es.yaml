@@ -1,0 +1,6 @@
+configuration:
+  log_level:
+    name: Nivel de registro
+    description: Cuánto detalle tienen los registros de GitHub Sync. La sincronización automática de carpetas se configura en la barra lateral de GitHub Sync, no aquí.
+network:
+  8099/tcp: Interfaz web de Ingress (gestionada por Home Assistant).

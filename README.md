@@ -31,6 +31,7 @@ Requires **Home Assistant OS** or **Supervised**. Container and Core installs do
 - **In-app update check** with one-click updates: the app checks for a new version of itself every 30 minutes (and on demand), shows a banner + "Update now" button, and Home Assistant persistent notification when one is available.
 - Check for updates can flag **conflicts** after you have synced at least once (local and remote both changed since last sync).
 - Branded App Store icon and repository banner, plus the same icon in the Ingress UI.
+- **Rewritten modern sidebar UI**: component-based (Preact + signals, bundled with the app — no CDN, no build step), dark-first design that follows your system light/dark preference, instant search over mappings, filter chips on diffs, toasts, skeleton loading, keyboard-accessible dialogs and a mobile-friendly layout.
 
 ## GitHub permissions and authorization
 
@@ -65,7 +66,20 @@ Signed in, use **Settings → Repository & write access** to change the app limi
 
 Local development copy: put this repository’s `github_sync/` folder into `/addons/github_sync` on the HA host, then **Check for updates** in the App store. It appears under **Local apps**.
 
+Until the pre-built image is enabled (see [Releases](#releases)), Supervisor
+builds the app on your Home Assistant machine the first time you install it —
+that takes a few minutes and needs a working internet connection.
+
 ## Using the sidebar
+
+The sidebar is a single-page app in the app container (Ingress), so nothing is
+exposed to your network. Pages:
+
+- **Mappings** — search box, one card per folder ↔ repository pair with a status
+  dot (in sync / auto-sync / error), auto-sync badges, and the Check / Upload /
+  Download / Edit / Remove actions.
+- **Settings** — GitHub connection (account, method, operation mode, allowlist),
+  App updates, how sync works, and environment details.
 
 ### Add a folder mapping
 
@@ -145,15 +159,65 @@ Automatic sync runs inside the app process (every 30 seconds it checks which map
 
 ## Development
 
+Backend tests (install `tests/requirements.txt` first):
+
 ```
 PYTHONPATH=github_sync/app python3 -m unittest discover -s tests -v
 ```
+
+Frontend tests render the real Preact app in Node against a small DOM stub, so
+templates, signals, event handlers and request payloads are covered without a
+browser:
+
+```
+node --test tests/test_frontend.cjs
+```
+
+Run the app locally (frontend paths are relative, so open `http://localhost:8099`):
+
+```
+cd github_sync/app
+GITHUB_SYNC_DATA=/tmp/github-sync-data.json \
+GITHUB_SYNC_ROOTS="homeassistant:/tmp/ha,share:/tmp/share" \
+python3 -m uvicorn main:app --host 0.0.0.0 --port 8099
+```
+
+### Frontend layout
+
+```
+github_sync/app/static/
+  index.html          shell + module entry
+  styles.css          design system (CSS custom properties, dark + light)
+  app/
+    main.js           mount + first load
+    deps.js           Preact / hooks / signals / htm wiring
+    state.js          signals store (single source of truth)
+    actions.js        API flows (check, upload, download, auth, updates)
+    api.js            fetch wrapper with typed errors
+    format.js         pure display helpers
+    ui.js             design-system primitives (Icon, Button, Card, Modal, …)
+    views/            app shell, header, mappings, editor wizard, diff, settings, dialogs
+  lib/                vendored ESM runtime (see lib/README.md — no CDN, no build)
+```
+
+Browser dependencies are committed under `static/lib/` and wired together in
+`deps.js`; re-vendor them with `.github/scripts/vendor_frontend.sh` after a
+version bump. CI parses every module and runs the render tests.
 
 See `ROADMAP.md` (handoff section) and `AGENTS.md` before changing code.
 
 ## Releases
 
 Merges to `main` publish a GitHub Release (`.github/workflows/release.yml`). Supervisor uses `github_sync/config.yaml` `version` for updates.
+
+`.github/workflows/publish.yml` builds the multi-arch app image and pushes it to
+GHCR so installs and updates download a pre-built image instead of compiling on
+your Home Assistant machine. It becomes active for users once
+`image: "ghcr.io/sandro-defender/github_sync"` is added to
+`github_sync/config.yaml` — verify with
+`.github/scripts/check_published_images.sh <version>` first. Store-listing
+requirements and the submission checklist live in
+[`docs/store-submission.md`](docs/store-submission.md).
 
 Every change in this repository must update:
 
@@ -165,8 +229,6 @@ See `AGENTS.md` and `ROADMAP.md`.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
-
-For API/authorization regression tests, install `tests/requirements.txt` and run `PYTHONPATH=github_sync/app python3 -m unittest discover -s tests -v`.
-
-Frontend request/render regressions: `node --test tests/test_frontend.cjs` (no npm dependencies).
+MIT — see [LICENSE](LICENSE). The vendored frontend runtime in
+`github_sync/app/static/lib/` is MIT (Preact, signals) and Apache-2.0 (htm); its
+license files are committed next to the modules.

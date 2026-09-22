@@ -1,33 +1,28 @@
 # Changelog
 
-## [0.3.2] - 2026-09-22
-
-- Complete roadmap dry-run previews without file or metadata writes
-- Add selected repository and write permissions to GitHub authorization
-- Fix Supervisor update checks and recover cleanly from fallback failures
-
-## [0.3.1] - 2026-09-22
-
-- Merge branch 'main' into arena/01a0c6c9-github-sync
-- Simplify GitHub sign-in to device-code only with popup and header menu
-
-## [0.3.0] - 2026-09-22
-
-- Merge branch 'main' into arena/01a0c675-github-sync
-- feat: zero-config GitHub login via built-in device-flow client
-- feat: in-app update check with one-click updates
-
-## [0.2.2] - 2026-09-22
-
-- Add in-app update check with one-click updates (#3)
-
-## [0.2.1] - 2026-09-22
-
-- Add GitHub OAuth authorization choices
-
-All notable changes to GitHub Sync are documented here.
-
 ## [Unreleased]
+
+### Modern sidebar UI (current session)
+
+- **Rewrote the Ingress panel as a component-based app** (Preact 10.27 + `@preact/signals` + `htm`) with no build step: the runtime is vendored as ESM under `github_sync/app/static/lib/` and wired up in `static/app/deps.js`, so the panel works entirely offline and there is no CDN, bundler or npm dependency. Source is split into `state.js` (signals store), `actions.js` (API flows), `api.js`, `format.js`, `ui.js` (design-system primitives) and `views/` (shell, header, mappings, wizard, diff, settings, dialogs).
+- **New visual language** (`static/styles.css`, rewritten as a design system): dark-first slate/graphite palette with gradient accents and glass surfaces, an automatic light theme, sticky blurred header, pill navigation, status dots per mapping, skeleton loaders, toasts, shimmering progress bar, and reduced-motion support.
+- **UX improvements**: instant mapping search, filter chips on check results, one-click GitHub links per mapping, a four-step wizard with a real stepper, live ignore preview with toggleable files, confirmations that keep the dry-run preview one click away, keyed dialogs (Esc/backdrop close, focus on open), account dropdown with connection details, copy-to-clipboard device code, and an error banner instead of silent failures.
+- **Accessibility & robustness**: `aria-live` toasts and busy overlay, `role=tablist`/`aria-selected` navigation, focus-visible rings, error boundary so a render crash shows a recovery panel, and a full-screen overlay while an app update restarts the container.
+- Signals re-render only what changed, so typing in the ignore editor no longer rebuilds the page and long jobs update progress without redrawing the panel.
+
+### Store readiness and release pipeline (current session)
+
+- **Publish workflow for pre-built multi-arch images** (`.github/workflows/publish.yml`): builds `ghcr.io/sandro-defender/{arch}-github_sync` with the Home Assistant builder actions on merges to `main`, releases and manual runs, then publishes the arch-independent manifest `ghcr.io/sandro-defender/github_sync` (`<version>` + `latest`). Users then download an image instead of building the app locally.
+- **Image verification helper** (`.github/scripts/check_published_images.sh`): checks the manifest and both arch images in GHCR and prints the exact `image:` line to add to `config.yaml`. `image:` stays unset until every check passes, because a missing manifest makes the Supervisor fail the install instead of falling back to a local build.
+- **Store artwork normalised** with the new `.github/scripts/optimize_store_assets.py`: `icon.png` 1536×1536 → 128×128 and `logo.png` 2880×1440 → 250×100 (2.29 MB → 39 KB combined), matching the presentation guidelines.
+- **Supervisor option translations** added for German, French, Spanish and Italian alongside English (`github_sync/translations/`).
+- **App folder README** (`github_sync/README.md`) for the App store intro and **store submission documentation** (`docs/store-submission.md`) covering the requirement checklist, the image rollout steps, a real-device verification list, and how a curated repository submission works.
+
+### Frontend test suite (current session)
+
+- Replaced the string-scraping frontend tests with **render tests**: `node --test tests/test_frontend.cjs` mounts the real Preact app into `tests/dom_stub.cjs` (a minimal DOM with elements, attributes, events and `innerHTML` serialisation) against a faked `fetch`, covering the mapping list, header/update banner, access dialog payloads, token secrecy, dry-run requests, confirmation options, wizard navigation, error surfacing, escaping, logout and a smoke pass over every view/overlay.
+- CI now parses every shipped frontend module as ESM (`node --input-type=module --check`, so `node --check` no longer fails on `import`/`export`) and runs the render suite; `AGENTS.md` and the README document the frontend layout and test commands.
+
 
 ### Dry-run previews and safety (current session)
 
@@ -81,6 +76,32 @@ All notable changes to GitHub Sync are documented here.
 
 ### Changed
 
+## [0.3.2] - 2026-09-22
+
+- Complete roadmap dry-run previews without file or metadata writes
+- Add selected repository and write permissions to GitHub authorization
+- Fix Supervisor update checks and recover cleanly from fallback failures
+
+## [0.3.1] - 2026-09-22
+
+- Merge branch 'main' into arena/01a0c6c9-github-sync
+- Simplify GitHub sign-in to device-code only with popup and header menu
+
+## [0.3.0] - 2026-09-22
+
+- Merge branch 'main' into arena/01a0c675-github-sync
+- feat: zero-config GitHub login via built-in device-flow client
+- feat: in-app update check with one-click updates
+
+## [0.2.2] - 2026-09-22
+
+- Add in-app update check with one-click updates (#3)
+
+## [0.2.1] - 2026-09-22
+
+- Add GitHub OAuth authorization choices
+
+All notable changes to GitHub Sync are documented here.
 
 ## [0.2.0] - 2026-09-22
 
