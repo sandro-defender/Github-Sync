@@ -1,13 +1,35 @@
 name: Release
 
+# Turns a merge to main into a release, in an order that can never advertise a
+# version users cannot install:
+#
+#   1. compute the next version and write it into config.yaml/Dockerfile/version.py
+#      (locally, not committed yet)
+#   2. dispatch `publish.yml` with that version and WAIT for it, then re-check
+#      GHCR anonymously exactly like the Supervisor does
+#   3. only if the image is verifiably published: commit the bump, tag, release
+#
+# Step 3 is what matters. `github_sync/config.yaml` pins
+# `image: ghcr.io/sandro-defender/github_sync`, and Supervisor pulls
+# `<image>:<version>` from `main` — a version that is advertised before its
+# manifest exists fails every install and update with "[404] manifest unknown"
+# and does not fall back to a local build. If publishing fails, this job fails
+# and main keeps shipping the previous, working version.
+
 on:
   push:
     branches: [main]
 
 permissions:
   contents: write
-  # Dispatching the image publish below needs permission to start a workflow.
+  # Dispatching and watching the image publish below needs Actions access.
   actions: write
+
+# One release at a time: two concurrent runs would race on the version bump and
+# on identifying which publish run belongs to which release.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -29,6 +51,56 @@ jobs:
       - name: Prepare version and changelog
         id: prep
         run: python .github/scripts/prepare_release.py
+
+      # Publish first, advertise second. The dispatched run builds from main
+      # (still the previous version) with an explicit version, and publish.yml
+      # aligns config.yaml/Dockerfile/version.py inside the image so the built
+      # app reports the version it is tagged with.
+      - name: Publish and verify the app image for this release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.prep.outputs.version }}
+          REPO_SLUG: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          newest_publish_run() {
+            gh run list --workflow=publish.yml --branch main --limit 1 \
+              --json databaseId --jq '.[0].databaseId // ""'
+          }
+
+          BEFORE="$(newest_publish_run)"
+          echo "Newest publish run so far: ${BEFORE:-none}"
+
+          gh workflow run publish.yml --ref main --field version="${VERSION}"
+
+          RUN_ID=""
+          for _ in $(seq 1 24); do
+            CANDIDATE="$(newest_publish_run)"
+            if [[ -n "${CANDIDATE}" && "${CANDIDATE}" != "${BEFORE}" ]]; then
+              RUN_ID="${CANDIDATE}"
+              break
+            fi
+            sleep 5
+          done
+
+          if [[ -z "${RUN_ID}" ]]; then
+            echo "::error::Dispatched publish.yml for ${VERSION} but no run appeared within two minutes. Check the Actions tab; the version bump was NOT committed."
+            exit 1
+          fi
+
+          echo "Watching publish run ${RUN_ID}: https://github.com/${REPO_SLUG}/actions/runs/${RUN_ID}"
+          gh run watch "${RUN_ID}" --interval 15 --exit-status || true
+
+          CONCLUSION="$(gh run view "${RUN_ID}" --json conclusion --jq '.conclusion')"
+          if [[ "${CONCLUSION}" != "success" ]]; then
+            gh run view "${RUN_ID}" || true
+            echo "::error::Publishing ghcr.io/sandro-defender/github_sync:${VERSION} failed (${CONCLUSION:-unknown}), so the version bump was NOT committed and main still advertises the previous release. Fix the publish run (see its annotations) and re-run, or publish by hand: gh workflow run publish.yml --ref main -f version=${VERSION}"
+            exit 1
+          fi
+
+          echo "Publish run ${RUN_ID} succeeded — verifying the registry as Supervisor would."
+          bash .github/scripts/check_published_images.sh "${VERSION}"
 
       - name: Commit version bump
         run: |
@@ -56,11 +128,3 @@ jobs:
           gh release create "$TAG" \
             --title "GitHub Sync ${{ steps.prep.outputs.version }}" \
             --notes-file .github/release-notes.md
-
-      # Pushes made with GITHUB_TOKEN do not trigger other workflows, so the
-      # image build has to be dispatched explicitly — and only after the version
-      # bump, otherwise the published image would carry the previous version.
-      - name: Publish the app image for this release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh workflow run publish.yml --ref main

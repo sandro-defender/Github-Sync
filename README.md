@@ -148,6 +148,21 @@ Update sources: the Supervisor App store (`http://supervisor/addons/self/info`, 
 
 Note: the Supervisor intentionally forbids an app from updating *itself* directly (`App github_sync can't update itself!`), which is why the one-click update goes through Home Assistant's update entity. On very old Home Assistant versions without the update entity, the app tells you to update from **Settings → Apps** instead.
 
+### When an update fails
+
+An update runs through the Supervisor, so the useful error is in the Supervisor
+log (**Settings → System → ⋮ → Supervisor log**), not in the app log.
+
+| Supervisor log says | Meaning | Fix |
+| --- | --- | --- |
+| `Can't install ghcr.io/sandro-defender/github_sync:X.Y.Z: [404] manifest unknown` | The store advertises `X.Y.Z` but no image was published for it. `config.yaml` pins `image:`, and Supervisor does **not** fall back to building locally. | Maintainer side: re-grant the repository write access on the three GHCR packages (*Package settings → Manage Actions access*) and republish with `gh run rerun <publish-run-id>`. User side: nothing to fix locally — keep the working version installed until the image exists. Details in [`docs/store-submission.md`](docs/store-submission.md). |
+| `unauthorized` / `denied` while pulling | The GHCR packages are private; Supervisor pulls anonymously. | Maintainer side: set each package to *Public* (**then** re-grant Actions access — changing visibility overwrites the existing permissions). |
+| `App github_sync can't update itself!` | The app tried to update itself through the Supervisor API. | Expected and already handled: use **Update now**, which goes through Home Assistant's update entity. |
+
+The release pipeline is ordered so the first row cannot normally happen: the
+image is published and verified in the registry **before** the new version is
+committed to `main` (see [Releases](#releases)).
+
 ## App options
 
 | Option | Description |
@@ -213,12 +228,23 @@ Merges to `main` publish a GitHub Release (`.github/workflows/release.yml`). Sup
 
 `.github/workflows/publish.yml` builds the multi-arch app image and pushes it to
 GHCR so installs and updates download a pre-built image instead of compiling on
-your Home Assistant machine. It runs for pull requests in build-only mode, and
-`release.yml` dispatches it after each version bump so the image tag always
-matches `version:`. `github_sync/config.yaml` then points at the multi-arch
-manifest with `image: "ghcr.io/sandro-defender/github_sync"`; verify a new tag
-with `.github/scripts/check_published_images.sh <version>`. Store-listing
-requirements and the submission checklist live in
+your Home Assistant machine. `github_sync/config.yaml` points at the multi-arch
+manifest with `image: "ghcr.io/sandro-defender/github_sync"`, and Supervisor
+pulls `<image>:<version>` — so the two must always agree.
+
+`release.yml` therefore **publishes before it advertises**: it computes the next
+version, dispatches the publish workflow with that version, waits for it, and
+only commits the version bump, tag and GitHub Release once the images are
+verifiably in the registry. `publish.yml` runs for pull requests in build-only
+mode, aligns the version inside the image with the tag it publishes, and ends
+with a `verify` job that pulls the registry anonymously exactly like Supervisor
+does. A failed publish leaves `main` on the previous, installable version and
+turns the Release job red instead of shipping an uninstallable update.
+
+Verify any tag by hand with `.github/scripts/check_published_images.sh <version>`
+(a weekly `validate.yml` job audits whatever `main` currently advertises).
+Store-listing requirements, the one-time GHCR package setup and the recovery
+steps for a denied publish live in
 [`docs/store-submission.md`](docs/store-submission.md).
 
 Every change in this repository must update:

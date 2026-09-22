@@ -32,7 +32,8 @@ Guidelines: [App presentation](https://developers.home-assistant.io/docs/apps/pr
 | Ingress UI (no exposed port, no host network) | ✅ `ingress: true`, `ingress_stream: true` |
 | Least privilege (no `host_*`, no `devices`, no `privileged`) | ✅ |
 | CI (linter + Python + frontend tests) | ✅ `.github/workflows/validate.yml` |
-| **Pre-built multi-arch images** | ✅ `0.4.0` published for `amd64` + `aarch64` with the multi-arch manifest; `image:` pinned in `config.yaml` in the follow-up PR |
+| **Pre-built multi-arch images** | ⚠️ `image:` is pinned in `config.yaml` and `0.4.0` is published; **`0.5.0` is not** — the publish run was denied by GHCR after the packages were made public. Recovery: [One-time registry setup](#one-time-registry-setup-per-package-in-the-browser) then republish |
+| A release can never advertise an uninstallable version | ✅ `release.yml` publishes and verifies the image *before* committing the version bump; `publish.yml` ends with a registry `verify` job; `validate.yml` audits weekly |
 | Verified on a real Home Assistant OS install | ⏳ see “Device verification” below |
 | AppArmor profile (optional, extra security point) | ⏳ not shipped — needs on-device validation first |
 
@@ -40,44 +41,92 @@ Guidelines: [App presentation](https://developers.home-assistant.io/docs/apps/pr
 
 Supervisor builds the app locally on the user's machine while `config.yaml` has
 no `image:` key. That is slow and can fail on constrained hardware, so the
-preferred end state is a published multi-arch image.
+preferred end state is a published multi-arch image — which is what the
+repository ships now:
 
-1. Merge the change. `release.yml` bumps the version, creates the release and
-   then dispatches **Publish app image** — the dispatch happens after the bump
-   so the image tag always equals the released version. Check the run
-   (`gh run list --workflow=publish.yml`); it publishes:
-   - `ghcr.io/sandro-defender/{arch}-github_sync:<version>` per architecture
-   - `ghcr.io/sandro-defender/github_sync:<version>` + `:latest` (multi-arch manifest)
-   If the dispatch was missed (for example when re-publishing by hand), start it
-   yourself: `gh workflow run publish.yml --ref main`.
-1.5 **Make the packages public** — GitHub creates container packages as
-   *private* regardless of the repository visibility, and there is no API for
-   this, so it is a one-time manual step per package
-   (`https://github.com/users/sandro-defender/packages/container/package/<name>`
-   → *Package settings → Danger Zone → Change visibility → Public* for
-   `github_sync`, `aarch64-github_sync` and `amd64-github_sync`). Without it
-   Supervisor's anonymous pull fails with `unauthorized`.
-2. Verify from a machine with registry access:
+```yaml
+# github_sync/config.yaml
+image: "ghcr.io/sandro-defender/github_sync"
+```
 
-   ```bash
-   .github/scripts/check_published_images.sh 0.4.0
-   ```
+Supervisor appends `:<version>` to that value and pulls the result. **There is
+no fallback to a local build**: if the manifest for the advertised version does
+not exist, every install and update fails with
 
-   Every line must be a green ✓ — the script exits non-zero if a manifest is
-   missing, and prints the visibility links when the registry answers 401/403.
-3. Only then add the image to the app manifest (done for `0.4.0` in the follow-up
-   PR) and ship a patch release:
+```
+Can't install ghcr.io/sandro-defender/github_sync:0.5.0: [404] manifest unknown
+```
 
-   ```yaml
-   # github_sync/config.yaml
-   image: "ghcr.io/sandro-defender/github_sync"
-   ```
+so the pipeline is built to never advertise a version it cannot serve.
 
-   The manifest tag must equal `version:` in `config.yaml`; the publish workflow
-   tags every build with the version it reads from that file.
+### One-time registry setup (per package, in the browser)
 
-If a publish run fails, keep `image:` out: an installed version whose image does
-not exist fails with “manifest unknown” instead of falling back to a local build.
+There is no API for either of these, and they must be repeated for each of the
+three packages — `github_sync`, `aarch64-github_sync`, `amd64-github_sync`:
+
+1. **Make the package public.** GitHub creates container packages as *private*
+   regardless of the repository visibility, and Supervisor pulls anonymously, so
+   a private package fails with `unauthorized`.
+   `https://github.com/users/sandro-defender/packages/container/package/<name>`
+   → *Package settings → Danger Zone → Change visibility → Public*.
+   This cannot be undone.
+2. **Re-grant Actions access immediately afterwards.** Changing how a package
+   gets its permissions *overwrites the existing ones* — the package stops
+   inheriting the linked repository's permissions, and with them the write
+   access that let `GITHUB_TOKEN` push. The very next publish then dies with
+   `denied: permission_denied: write_package`, which is exactly what happened to
+   `0.5.0`. In the same sitting:
+   *Package settings → Manage Actions access → Add repository →
+   `sandro-defender/Github-Sync` → Role: **Write***.
+
+Both steps are listed in the order they must be done because step 1 silently
+undoes what the first publish relied on.
+
+### What the pipeline does per release
+
+`release.yml` runs on every merge to `main` and, in this order:
+
+1. computes the next version (`.github/scripts/prepare_release.py`) and writes it
+   into `config.yaml`, the `io.hass.version` Dockerfile label and
+   `app/version.py` — **without committing yet**;
+2. dispatches **Publish app image** with that version
+   (`gh workflow run publish.yml --ref main -f version=<version>`) and waits for
+   it. `publish.yml` builds `ghcr.io/sandro-defender/{arch}-github_sync`,
+   publishes the multi-arch manifest `ghcr.io/sandro-defender/github_sync`
+   (`<version>` + `latest`), aligns the version inside the image with the tag it
+   is published under, and finishes with a `verify` job that pulls the registry
+   anonymously the way Supervisor does;
+3. only when that run is green **and** all four references exist: commits the
+   version bump, tags and creates the GitHub Release.
+
+If publishing fails, step 3 never happens: `main` keeps advertising the previous
+— installable — version, the Release job turns red, and its annotations say what
+to fix. No user ever sees an update that cannot be installed.
+
+Registry credentials are `secrets.GHCR_TOKEN` when that repository secret exists
+(a classic PAT with `write:packages`, optionally with the `GHCR_USERNAME`
+repository variable), otherwise the workflow's `GITHUB_TOKEN`. The PAT is the
+escape hatch for when package permissions get out of sync again.
+
+### Checking a version by hand
+
+```bash
+.github/scripts/check_published_images.sh          # version from config.yaml
+.github/scripts/check_published_images.sh 0.5.1    # explicit
+```
+
+Every line must be a green ✓. The script distinguishes *not published* (404)
+from *private* (401/403) from *registry unreachable* (exit 2) and prints the
+matching remediation; in CI it also emits `::error::` annotations. `validate.yml`
+runs it as a weekly audit of whatever `main` currently advertises.
+
+To (re)publish without a release — for example after fixing package permissions:
+
+```bash
+gh run rerun <failed-publish-run-id>                    # same commit, same version
+gh workflow run publish.yml --ref main                  # config.yaml version
+gh workflow run publish.yml --ref main -f version=0.5.0 # explicit version
+```
 
 ## Device verification (before tier 2)
 
