@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0] - 2026-09-22
+
+- fix(release): publish the app image after the version bump, not before
+- docs(roadmap): record that the image pipeline builds both architectures in CI
+- ci(publish): build the app image on pull requests too
+- feat(ui): rebuild the sidebar panel with Preact + signals and ship store-readiness work
+
 ## [Unreleased]
 
 ### Modern sidebar UI (current session)
