@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.3.1] - 2026-09-22
+
+- Merge branch 'main' into arena/01a0c6c9-github-sync
+- Simplify GitHub sign-in to device-code only with popup and header menu
+
 ## [0.3.0] - 2026-09-22
 
 - Merge branch 'main' into arena/01a0c675-github-sync
