@@ -32,7 +32,7 @@ Guidelines: [App presentation](https://developers.home-assistant.io/docs/apps/pr
 | Ingress UI (no exposed port, no host network) | ✅ `ingress: true`, `ingress_stream: true` |
 | Least privilege (no `host_*`, no `devices`, no `privileged`) | ✅ |
 | CI (linter + Python + frontend tests) | ✅ `.github/workflows/validate.yml` |
-| **Pre-built multi-arch images** | ⚠️ `image:` is pinned in `config.yaml` and `0.4.0` is published; **`0.5.0` is not** — the publish run was denied by GHCR after the packages were made public. Recovery: [One-time registry setup](#one-time-registry-setup-per-package-in-the-browser) then republish |
+| **Pre-built multi-arch images** | ✅ `image:` is pinned in `config.yaml`; `0.4.0` and **`0.5.1`** + `latest` are published and anonymously pullable (`0.5.0` was skipped — its publish was denied by GHCR, see [One-time registry setup](#one-time-registry-setup-per-package-in-the-browser)) |
 | A release can never advertise an uninstallable version | ✅ `release.yml` publishes and verifies the image *before* committing the version bump; `publish.yml` ends with a registry `verify` job; `validate.yml` audits weekly |
 | Verified on a real Home Assistant OS install | ⏳ see “Device verification” below |
 | AppArmor profile (optional, extra security point) | ⏳ not shipped — needs on-device validation first |
@@ -69,15 +69,17 @@ three packages — `github_sync`, `aarch64-github_sync`, `amd64-github_sync`:
    a private package fails with `unauthorized`.
    `https://github.com/users/sandro-defender/packages/container/package/<name>`
    → *Package settings → Danger Zone → Change visibility → Public*.
-   This cannot be undone.
+   This cannot be undone. *(Done — all three are public.)*
 2. **Re-grant Actions access immediately afterwards.** Changing how a package
    gets its permissions *overwrites the existing ones* — the package stops
    inheriting the linked repository's permissions, and with them the write
    access that let `GITHUB_TOKEN` push. The very next publish then dies with
    `denied: permission_denied: write_package`, which is exactly what happened to
-   `0.5.0`. In the same sitting:
+   `0.5.0` (it was never published; `0.5.1` shipped once access was restored).
+   In the same sitting:
    *Package settings → Manage Actions access → Add repository →
-   `sandro-defender/Github-Sync` → Role: **Write***.
+   `sandro-defender/Github-Sync` → Role: **Write***. *(Done — and proven: the
+   `0.5.1` publish run pushed both architectures and the manifest.)*
 
 Both steps are listed in the order they must be done because step 1 silently
 undoes what the first publish relied on.
