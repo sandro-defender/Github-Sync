@@ -11,7 +11,14 @@ from urllib.parse import parse_qs, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "github_sync" / "app"))
 
-from oauth import OAuthBroker, normalize_scope, oauth_base_from_api  # noqa: E402
+from oauth import (  # noqa: E402
+    GITHUB_CLI_CLIENT_ID,
+    OAuthBroker,
+    device_flow_client_id,
+    is_github_dot_com,
+    normalize_scope,
+    oauth_base_from_api,
+)
 from store import Store  # noqa: E402
 
 
@@ -26,6 +33,33 @@ class OAuthTests(unittest.TestCase):
         self.assertEqual(
             oauth_base_from_api("https://github.example.com/api/v3"),
             "https://github.example.com",
+        )
+
+    def test_is_github_dot_com(self) -> None:
+        self.assertTrue(is_github_dot_com("https://api.github.com"))
+        self.assertTrue(is_github_dot_com(None))
+        self.assertFalse(is_github_dot_com("https://github.example.com/api/v3"))
+
+    def test_device_flow_client_id_prefers_configured(self) -> None:
+        self.assertEqual(
+            device_flow_client_id("Iv1.custom", "https://api.github.com"), "Iv1.custom"
+        )
+        self.assertEqual(
+            device_flow_client_id("Iv1.custom", "https://github.example.com/api/v3"),
+            "Iv1.custom",
+        )
+
+    def test_device_flow_client_id_builtin_for_github_com(self) -> None:
+        # No user OAuth App: the public GitHub CLI client is used, so the
+        # device flow works out of the box (same as HA Version Control).
+        self.assertEqual(device_flow_client_id("", "https://api.github.com"), GITHUB_CLI_CLIENT_ID)
+        self.assertEqual(device_flow_client_id(None, None), GITHUB_CLI_CLIENT_ID)
+        self.assertEqual(device_flow_client_id("  ", "https://api.github.com"), GITHUB_CLI_CLIENT_ID)
+
+    def test_device_flow_client_id_empty_for_enterprise(self) -> None:
+        # GitHub Enterprise has no built-in client; the caller must ask for one.
+        self.assertEqual(
+            device_flow_client_id("", "https://github.example.com/api/v3"), ""
         )
 
     def test_public_status_does_not_expose_oauth_secret(self) -> None:

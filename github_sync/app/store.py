@@ -9,6 +9,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from oauth import is_github_dot_com
 from version import __version__
 
 DEFAULT_IGNORE_UPLOAD = """\
@@ -132,6 +133,9 @@ class Store:
                 "client_secret_configured": bool(oauth.get("client_secret")),
                 "redirect_uri": oauth.get("redirect_uri") or "",
                 "scope": oauth.get("scope") if oauth.get("scope") in ("repo", "public_repo") else "repo",
+                # True when the one-click device flow works without the user
+                # registering an OAuth App (github.com built-in client).
+                "builtin_device_flow": is_github_dot_com(self.data.get("api_base")),
             },
             "defaults": {
                 "ignore_upload": DEFAULT_IGNORE_UPLOAD,

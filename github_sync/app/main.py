@@ -16,7 +16,14 @@ from fastapi.staticfiles import StaticFiles
 from github_client import GithubAPIError, GithubAuthError, GithubClient
 from ha import notify_ha
 from ignore import IgnoreMatcher
-from oauth import OAuthBroker, OAuthError, normalize_scope, oauth_base_from_api
+from oauth import (
+    OAuthBroker,
+    OAuthError,
+    device_flow_client_id,
+    is_github_dot_com,
+    normalize_scope,
+    oauth_base_from_api,
+)
 from paths import PathError, browse_directory, collect_files, discover_roots, resolve_under_roots
 from progress import ProgressHub
 from scheduler import Scheduler
@@ -278,14 +285,19 @@ async def save_oauth_config(body: dict[str, Any]) -> dict[str, Any]:
 @app.post("/api/oauth/device/start")
 async def start_device_oauth() -> dict[str, Any]:
     config = store().oauth_config()
-    if not config["client_id"]:
-        raise HTTPException(status_code=400, detail="Save a GitHub OAuth App client ID first")
+    api_base = store().data.get("api_base") or "https://api.github.com"
+    client_id = device_flow_client_id(config["client_id"], api_base)
+    if not client_id:
+        raise HTTPException(
+            status_code=400,
+            detail="GitHub Enterprise needs an OAuth App client ID: save it below or use a personal access token",
+        )
     try:
         return await oauth().start_device(
             app.state.session,
-            client_id=config["client_id"],
+            client_id=client_id,
             scope=config["scope"],
-            oauth_base=oauth_base_from_api(store().data.get("api_base")),
+            oauth_base=oauth_base_from_api(api_base),
         )
     except OAuthError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err

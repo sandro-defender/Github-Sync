@@ -606,7 +606,7 @@ function renderList() {
   if (s.loading) return `<p class="meta">Loading mappings…</p>`;
   if (!s.status?.configured) {
     return `<div class="empty">${SVG}<h2>Connect GitHub first</h2>
-      <p>Open Settings, paste a personal access token or use GitHub OAuth, then map folders.</p>
+      <p>Open Settings and connect GitHub — one-click device login, or paste a personal access token — then map folders.</p>
       <div class="row" style="justify-content:center"><button class="btn" data-action="tab" data-view="settings">Open settings</button></div></div>`;
   }
   const cards = (s.mappings || [])
@@ -876,8 +876,9 @@ function renderSettings() {
   const s = state.status || {};
   const oauth = s.oauth || {};
   const device = state.oauthDevice;
-  return `<div class="card">
-    <h3>GitHub connection</h3>
+  return `${renderOauthCard(oauth, device)}
+  <div class="card" style="margin-top:16px">
+    <h3>GitHub connection (personal access token)</h3>
     <div class="meta">
       ${s.configured ? `Signed in as <strong>@${esc(s.username)}</strong>` : "Not configured"}<br>
       API: ${esc(s.api_base || "https://api.github.com")}<br>
@@ -896,35 +897,6 @@ function renderSettings() {
     </div>
     <p class="meta" style="margin-top:12px">Fine-grained: Contents Read and write. Classic: <code>repo</code>. The token is stored in this app’s <code>/data</code> volume and is never sent back to the browser.</p>
   </div>
-  <div class="card oauth-card" style="margin-top:16px">
-    <h3>Automatic GitHub authorization</h3>
-    <p class="meta">Choose a login method below. Device authorization is recommended for Home Assistant because it does not need a callback URL. Create a GitHub OAuth App first, then enter its client details here.</p>
-    <div class="oauth-grid">
-      <label class="field">OAuth App client ID
-        <input type="text" data-field-global="oauthClientIdDraft" value="${esc(state.oauthClientIdDraft)}" placeholder="Iv1.…">
-      </label>
-      <label class="field">Client secret <span class="meta">${oauth.client_secret_configured ? "(saved)" : "(required for web login)"}</span>
-        <input type="password" data-field-global="oauthClientSecretDraft" value="${esc(state.oauthClientSecretDraft)}" placeholder="${oauth.client_secret_configured ? "••••••••  (leave blank to keep)" : "enter secret"}">
-      </label>
-    </div>
-    <label class="field">Permission scope
-      <select data-field-global="oauthScopeDraft">
-        <option value="repo" ${state.oauthScopeDraft === "repo" ? "selected" : ""}>Private and public repositories (repo)</option>
-        <option value="public_repo" ${state.oauthScopeDraft === "public_repo" ? "selected" : ""}>Public repositories only (public_repo)</option>
-      </select>
-    </label>
-    <label class="field">Web OAuth callback URL
-      <input type="text" data-field-global="oauthRedirectDraft" value="${esc(state.oauthRedirectDraft)}" placeholder="${esc(callbackUrl())}">
-    </label>
-    <div class="row">
-      <button class="btn ghost" data-action="useCallback">Use this app’s callback URL</button>
-      <button class="btn ghost" data-action="saveOAuth">Save authorization settings</button>
-      <button class="btn" data-action="deviceAuth">Authorize with device code</button>
-      <button class="btn" data-action="webAuth">Authorize in browser</button>
-    </div>
-    ${device ? `<div class="oauth-device"><strong>Waiting for GitHub approval</strong><p>Open <a href="${esc(device.verification_uri_complete || device.verification_uri)}" target="_blank" rel="noopener">${esc(device.verification_uri)}</a> and enter <code>${esc(device.user_code)}</code>.</p><p class="meta">This page checks automatically. The code expires in about ${Math.ceil(Number(device.expires_in || 900) / 60)} minutes.</p><button class="btn ghost" data-action="cancelDevice">Cancel</button></div>` : ""}
-    <p class="meta" style="margin-top:12px">The OAuth client secret, temporary authorization codes, and final access token stay on the app server and are never returned to the browser. Device login uses the selected scope; web login requires registering the exact callback URL in GitHub.</p>
-  </div>
   <div class="card" style="margin-top:16px">
     <h3>How sync works</h3>
     <div class="meta">
@@ -935,6 +907,46 @@ function renderSettings() {
     </div>
   </div>
   ${renderAppUpdates()}`;
+}
+
+function renderOauthCard(oauth, device) {
+  const builtin = oauth.builtin_device_flow !== false;
+  return `<div class="card oauth-card">
+    <h3>Connect with GitHub</h3>
+    <p class="meta">One-click login — no OAuth App to create and no token to paste. Press the button, open the GitHub link, and enter the short code. This uses the public GitHub CLI OAuth client, the same zero-config flow as the Home Assistant Version Control app.</p>
+    ${builtin ? "" : `<p class="meta" style="color:var(--warn)">GitHub Enterprise: the built-in client only works on github.com. Save your own OAuth App client ID under Advanced, or use a personal access token.</p>`}
+    <label class="field">Permission scope
+      <select data-field-global="oauthScopeDraft">
+        <option value="repo" ${state.oauthScopeDraft === "repo" ? "selected" : ""}>Private and public repositories (repo)</option>
+        <option value="public_repo" ${state.oauthScopeDraft === "public_repo" ? "selected" : ""}>Public repositories only (public_repo)</option>
+      </select>
+    </label>
+    <div class="row">
+      <button class="btn" data-action="deviceAuth">Connect with GitHub</button>
+    </div>
+    ${device ? `<div class="oauth-device"><strong>Waiting for GitHub approval</strong><p>Open <a href="${esc(device.verification_uri_complete || device.verification_uri)}" target="_blank" rel="noopener">${esc(device.verification_uri)}</a> and enter <code>${esc(device.user_code)}</code>.</p><p class="meta">This page checks automatically. The code expires in about ${Math.ceil(Number(device.expires_in || 900) / 60)} minutes.</p><button class="btn ghost" data-action="cancelDevice">Cancel</button></div>` : ""}
+    <details class="advanced">
+      <summary>Advanced: your own OAuth App (browser login, GitHub Enterprise)</summary>
+      <p class="meta" style="margin-top:10px">Optional. A custom client ID takes precedence over the built-in one for device login, and is required for browser login and GitHub Enterprise.</p>
+      <div class="oauth-grid">
+        <label class="field">OAuth App client ID
+          <input type="text" data-field-global="oauthClientIdDraft" value="${esc(state.oauthClientIdDraft)}" placeholder="Iv1.…">
+        </label>
+        <label class="field">Client secret <span class="meta">${oauth.client_secret_configured ? "(saved)" : "(required for web login)"}</span>
+          <input type="password" data-field-global="oauthClientSecretDraft" value="${esc(state.oauthClientSecretDraft)}" placeholder="${oauth.client_secret_configured ? "••••••••  (leave blank to keep)" : "enter secret"}">
+        </label>
+      </div>
+      <label class="field">Web OAuth callback URL
+        <input type="text" data-field-global="oauthRedirectDraft" value="${esc(state.oauthRedirectDraft)}" placeholder="${esc(callbackUrl())}">
+      </label>
+      <div class="row">
+        <button class="btn ghost" data-action="useCallback">Use this app’s callback URL</button>
+        <button class="btn ghost" data-action="saveOAuth">Save authorization settings</button>
+        <button class="btn" data-action="webAuth">Authorize in browser</button>
+      </div>
+      <p class="meta" style="margin-top:12px">The OAuth client secret, temporary authorization codes, and final access token stay on the app server and are never returned to the browser. Browser login requires registering the exact callback URL in your OAuth App.</p>
+    </details>
+  </div>`;
 }
 
 function renderAppUpdates() {

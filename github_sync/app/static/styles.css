@@ -131,6 +131,9 @@ textarea { min-height: 180px; font-family: ui-monospace, Menlo, monospace; font-
 .oauth-device { margin-top: 16px; padding: 14px; border: 1px solid var(--accent); border-radius: 8px; background: rgba(3,169,244,.08); }
 .oauth-device p { margin: 8px 0; }
 .oauth-device code { font-size: 20px; letter-spacing: .12em; color: var(--text); }
+details.advanced { margin-top: 18px; }
+details.advanced summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+details.advanced[open] summary { color: var(--text); margin-bottom: 6px; }
 @media (max-width: 860px) { .split, .oauth-grid { grid-template-columns: 1fr; } }
 .file { display: flex; gap: 8px; align-items: flex-start; padding: 6px 8px; font-size: 13px; }
 .file.ex { color: var(--muted); text-decoration: line-through; }
