@@ -184,7 +184,7 @@ a.btn {
 }
 .busy {
   position: fixed; inset: 0; background: rgba(0,0,0,.35);
-  display: flex; align-items: center; justify-content: center; z-index: 6;
+  display: flex; align-items: center; justify-content: center; z-index: 10;
 }
 .spinner {
   width: 36px; height: 36px; border-radius: 50%;

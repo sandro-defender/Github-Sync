@@ -21,8 +21,8 @@ Requires **Home Assistant OS** or **Supervised** (Apps are not available on Cont
 
 **Session branch:** `arena/01a0c6e1-github-sync` (stay on the branch provided by your Arena session).
 **Base version:** `0.3.1` in config.yaml, Dockerfile and version.py. Release automation bumps all three on merge.
-**Current work:** Supervisor 403 fix complete (correct URL + response envelope, fallback/recovery tests); configurable GitHub access complete; dry-run previews are in progress.
-**Validation:** 72 unit tests passing after access controls. Local Python environment: `.venv`.
+**Current work:** Supervisor 403 fix complete (correct URL + response envelope, fallback/recovery tests); configurable GitHub access complete; dry-run upload/download previews complete. All changes are committed on this session branch; release version remains managed by the merge workflow.
+**Validation:** 81 Python tests and 5 frontend request/render tests passing, plus JavaScript syntax check. Local Python environment: `.venv`. Full browser testing was blocked by a Chromium download TLS/network error; real HA Supervisor/device approval still needs integration verification.
 
 **What works today**
 
@@ -35,10 +35,11 @@ Requires **Home Assistant OS** or **Supervised** (Apps are not available on Cont
 - Persistent notification in Home Assistant when a sync fails (needs Supervisor `SUPERVISOR_TOKEN`; `homeassistant_api: true`).
 - Progress text polled by the UI during long jobs (`GET api/progress`), including completed upload blobs.
 - Three-way **conflict** flag on Check after at least one successful upload/download (uses stored `file_shas` in `/data`, stripped from the public API).
+- **Dry runs:** Upload/Download confirmation offers a read-only plan with create/overwrite/delete counts, no persisted metadata or notifications. Upload replacement includes remote deletions; download respects its separate ignore and cleanup settings. Failed/truncated/unsafe plans are rejected without writes.
 - Download confirmation can opt into deleting local extras; it is off by default and respects download-ignore rules.
 - Refreshed App Store icon and repository banner; the icon is also used in the Ingress header and browser tab.
 - **In-app update check + one-click update**: background check every 30 min (Supervisor `/addons/self/info`, GitHub-release fallback), header version chip, Settings → App updates card, green banner with **Update now**, HA persistent notification once per new version. The update itself is triggered through Home Assistant's update entity (`update/install`) because the Supervisor forbids an app updating itself.
-- Unit tests: `PYTHONPATH=github_sync/app python3 -m unittest discover -s tests -v` (needs `aiohttp` for `test_sync_hash` and `test_updater`).
+- Tests: install `tests/requirements.txt`; run `PYTHONPATH=github_sync/app python3 -m unittest discover -s tests -v` and `node --test tests/test_frontend.cjs`. CI runs both plus frontend syntax checks.
 
 **Do not**
 
@@ -47,13 +48,15 @@ Requires **Home Assistant OS** or **Supervised** (Apps are not available on Cont
 - Put the GitHub token in API responses or in `config.yaml` options.
 - Use a `git` CLI; keep the Git Data API.
 
-**Next work (Phase 10)**
+**Next work (Phase 11)**
 
-1. Dry-run mode that never writes — in progress in this session.
-2. Publish multi-arch images and set `image:` in `config.yaml` so Supervisor does not local-build.
-3. ~~Cap or prune `file_shas` snapshots if `/data/github_sync.json` grows large~~ — done (`MAX_FILE_SHAS = 5000`, truncation flag).
-4. Translations beyond English for Supervisor options.
+1. Verify these changes on a real HA OS/Supervised installation: update check, device authorization, GitHub fine-grained read-only/restricted repos, auto-sync denial and previews.
+2. Publish multi-arch images and set `image:` in `config.yaml` once the matching images exist so Supervisor does not local-build. Do not set `image:` before a working publish pipeline.
+3. Translations beyond English for Supervisor options.
+4. Further sync hardening: preserve Git tree modes/non-blob entries, improve large-blob handling and concurrency protections.
 5. Submit to the community App store when stable.
+
+Completed readiness items: no-write dry-run previews and capped `file_shas` snapshots (`MAX_FILE_SHAS = 5000`).
 
 **Local run**
 
@@ -101,7 +104,7 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 
 - [x] FastAPI server on ingress port 8099
 - [x] Persistent settings in `/data` (token never sent to the browser)
-- [x] Connect GitHub from the app UI via device authorization only (popup with auto-copied code + approval link; clickable `@username` menu with options, switch account, log out)
+- [x] Connect GitHub from the app UI via selectable device scopes or a fine-grained token (device popup with auto-copied code + approval link; clickable `@username` menu with options, switch account, log out)
 - [x] Health endpoint for Supervisor watchdog
 - [x] Admin-only sidebar panel (`panel_admin: true`)
 
@@ -160,7 +163,7 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 ## Phase 9 — Polish
 
 - [x] unittest for ignore matcher, path sandbox, SHA, scheduler due-dates
-- [ ] Dry-run mode that never writes
+- [x] Dry-run mode that never writes
 - [x] Per-blob upload progress
 - [ ] Publish multi-arch images (`image:` in config.yaml)
 - [ ] Submit to community app store when stable
@@ -188,7 +191,7 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 
 - [x] Configurable GitHub access, explicit OAuth limitations, optional fine-grained token, server-side enforcement and tests.
 
-- [ ] Dry-run mode that never writes.
+- [x] Dry-run mode that never writes.
 - [ ] Publish multi-arch images and set `image:` in `config.yaml` so Supervisor does not local-build.
 - [x] Cap or prune `file_shas` snapshots if `/data/github_sync.json` grows large.
 - [ ] Translations beyond English for Supervisor options.
@@ -209,6 +212,7 @@ github_sync/
     main.py                     FastAPI + Ingress
     store.py                    /data/github_sync.json
     github_client.py
+    access.py                   repository allowlist and read/write validation
     oauth.py                    GitHub device flow with selectable scopes and flow-bound access policy
     ignore.py
     paths.py

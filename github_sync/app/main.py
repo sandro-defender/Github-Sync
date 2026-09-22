@@ -120,8 +120,9 @@ async def _execute(
     source: str,
     message: str | None = None,
     delete_extras: bool = False,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
-    require_access(store().data.get("access"), mapping["repository"], write=direction == "upload")
+    require_access(store().data.get("access"), mapping["repository"], write=direction == "upload" and not dry_run)
     mapping_id = mapping["id"]
     progress().start(mapping_id, f"Starting {direction}…")
     try:
@@ -137,11 +138,15 @@ async def _execute(
                     notification_id=f"github_sync_check_{mapping_id}",
                 )
         elif direction == "upload":
-            result = await sync.upload(mapping, message)
+            result = await sync.upload(mapping, message, dry_run=dry_run)
         elif direction == "download":
-            result = await sync.download(mapping, delete_extras=delete_extras)
+            result = await sync.download(mapping, delete_extras=delete_extras, dry_run=dry_run)
         else:
             raise HTTPException(status_code=400, detail="Unknown direction")
+
+        if dry_run:
+            progress().finish(mapping_id)
+            return result
 
         # Cap the conflict-detection snapshot so /data stays small (roadmap).
         capped_shas, shas_truncated, shas_total = cap_file_shas(
@@ -167,9 +172,10 @@ async def _execute(
         return result
     except Exception as err:
         progress().finish(mapping_id, error=str(err))
-        mapping["last_error"] = str(err)
-        await store().save()
-        await _notify_failure(mapping, err)
+        if not dry_run:
+            mapping["last_error"] = str(err)
+            await store().save()
+            await _notify_failure(mapping, err)
         raise
 
 
@@ -383,10 +389,17 @@ async def check(body: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _bool_option(body: dict[str, Any], key: str) -> bool:
+    value = body.get(key, False)
+    if not isinstance(value, bool):
+        raise HTTPException(status_code=400, detail=f"{key} must be a JSON boolean")
+    return value
+
+
 @app.post("/api/upload")
 async def upload(body: dict[str, Any]) -> dict[str, Any]:
     mapping = store().get_mapping(body.get("mapping_id") or "")
-    result = await _execute(mapping, "upload", source="manual", message=body.get("message"))
+    result = await _execute(mapping, "upload", source="manual", message=body.get("message"), dry_run=_bool_option(body, "dry_run"))
     result.pop("file_shas", None)
     return result
 
@@ -398,7 +411,8 @@ async def download(body: dict[str, Any]) -> dict[str, Any]:
         mapping,
         "download",
         source="manual",
-        delete_extras=bool(body.get("delete_extras", False)),
+        delete_extras=_bool_option(body, "delete_extras"),
+        dry_run=_bool_option(body, "dry_run"),
     )
     result.pop("file_shas", None)
     return result

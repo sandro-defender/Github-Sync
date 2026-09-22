@@ -109,9 +109,11 @@ class SyncEngine:
             else mapping.get("ignore_download")
         )
         matcher = IgnoreMatcher(ignore_text, extra=ALWAYS_IGNORE)
-        included, excluded, _truncated = await asyncio.to_thread(
+        included, excluded, truncated = await asyncio.to_thread(
             collect_files, self.roots, mapping["local_path"], matcher
         )
+        if truncated:
+            raise PathError("Folder scan limit reached; narrow the mapping before syncing")
         by_path = {item["path"]: item for item in included if not item.get("too_large")}
         skipped = [item for item in included if item.get("too_large")]
         skipped.extend(
@@ -136,6 +138,8 @@ class SyncEngine:
         if not tree_sha:
             return {}, commit_sha, None
         tree = await self.client.get_tree(owner, repo, tree_sha)
+        if tree.get("truncated"):
+            raise PathError("GitHub tree is truncated; refusing an incomplete sync plan")
         blobs = {
             entry["path"]: entry["sha"]
             for entry in tree.get("tree") or []
@@ -143,14 +147,23 @@ class SyncEngine:
         }
         return blobs, commit_sha, tree_sha
 
-    async def _hash_local(self, mapping: dict[str, Any], files: dict[str, dict[str, Any]]):
+    def _safe_local_path(self, mapping: dict[str, Any], rel: str) -> Path:
+        if not rel or rel.startswith("/") or any(part in ("", ".", "..") for part in rel.split("/")):
+            raise PathError("Unsafe relative file path")
         folder = resolve_under_roots(self.roots, mapping["local_path"])
+        target = resolve_under_roots(self.roots, f"{mapping['local_path']}/{rel}")
+        try:
+            target.relative_to(folder)
+        except ValueError as err:
+            raise PathError("File is outside the mapped folder") from err
+        return target
 
+    async def _hash_local(self, mapping: dict[str, Any], files: dict[str, dict[str, Any]]):
         def _hash_all() -> dict[str, str]:
             result: dict[str, str] = {}
             for rel in files:
                 try:
-                    data = read_file_bytes(folder / rel)
+                    data = read_file_bytes(self._safe_local_path(mapping, rel))
                 except OSError:
                     continue
                 result[rel] = git_blob_sha(data)
@@ -234,20 +247,18 @@ class SyncEngine:
             "file_shas": local_shas,
         }
 
-    async def upload(self, mapping: dict[str, Any], message: str | None = None) -> dict[str, Any]:
+    async def upload(self, mapping: dict[str, Any], message: str | None = None, *, dry_run: bool = False) -> dict[str, Any]:
         owner, repo = split_repo(mapping["repository"])
         branch = mapping.get("branch") or "main"
         repo_path = mapping.get("repo_path") or ""
         self._progress(mapping, "Reading local files…")
         local_files, skipped_large = await self._local_files(mapping, "upload")
-        folder = resolve_under_roots(self.roots, mapping["local_path"])
-
         def _read_all() -> list[tuple[str, bytes]]:
             payload: list[tuple[str, bytes]] = []
             for rel, meta in local_files.items():
                 if meta.get("too_large"):
                     continue
-                data = read_file_bytes(folder / rel)
+                data = read_file_bytes(self._safe_local_path(mapping, rel))
                 if len(data) > MAX_FILE_SIZE:
                     continue
                 payload.append((_repo_file_path(repo_path, rel), data))
@@ -256,6 +267,22 @@ class SyncEngine:
         file_bytes = await asyncio.to_thread(_read_all)
         if not file_bytes:
             raise PathError("Nothing to upload (folder empty or fully ignored)")
+
+        if dry_run:
+            remote, commit_sha, _tree = await self._remote_blobs(mapping)
+            local = {path: git_blob_sha(data) for path, data in file_bytes}
+            actions = []
+            unchanged = 0
+            for path, sha in local.items():
+                if remote.get(path) == sha:
+                    unchanged += 1
+                else:
+                    actions.append({"path": path, "action": "update" if path in remote else "create"})
+            prefix = repo_path.strip("/")
+            for path in remote:
+                if (not prefix or path == prefix or path.startswith(prefix + "/")) and path not in local:
+                    actions.append({"path": path, "action": "delete"})
+            return self._dry_result(mapping, "upload", commit_sha, actions, unchanged, len(skipped_large))
 
         total_blobs = len(file_bytes)
 
@@ -321,7 +348,7 @@ class SyncEngine:
         }
 
     async def download(
-        self, mapping: dict[str, Any], delete_extras: bool = False
+        self, mapping: dict[str, Any], delete_extras: bool = False, *, dry_run: bool = False
     ) -> dict[str, Any]:
         owner, repo = split_repo(mapping["repository"])
         repo_path = mapping.get("repo_path") or ""
@@ -331,12 +358,13 @@ class SyncEngine:
 
         self._progress(mapping, "Downloading from GitHub…", total=len(remote_blobs))
         matcher = IgnoreMatcher(mapping.get("ignore_download"), extra=ALWAYS_IGNORE)
-        folder = resolve_under_roots(self.roots, mapping["local_path"])
         local_files, _ = await self._local_files(mapping, "download")
         local_shas = await self._hash_local(mapping, local_files)
 
         written = 0
         skipped = 0
+        unchanged = 0
+        actions = []
         for remote_path, sha in remote_blobs.items():
             rel = _local_rel_from_repo(repo_path, remote_path)
             if rel is None or rel == "":
@@ -345,10 +373,14 @@ class SyncEngine:
                 skipped += 1
                 continue
             if local_shas.get(rel) == sha:
+                unchanged += 1
+                continue
+            target = self._safe_local_path(mapping, rel)
+            if dry_run:
+                exists = await asyncio.to_thread(target.exists)
+                actions.append({"path": rel, "action": "update" if exists else "create"})
                 continue
             data = await self.client.get_blob(owner, repo, sha)
-            target: Path = folder / rel
-            resolve_under_roots(self.roots, f"{mapping['local_path']}/{rel}")
             await asyncio.to_thread(write_file_bytes, target, data)
             written += 1
             self._progress(
@@ -368,9 +400,15 @@ class SyncEngine:
             for rel in list(local_shas):
                 if rel in remote_rels or matcher.is_ignored(rel, False):
                     continue
-                await asyncio.to_thread(delete_file, folder / rel)
+                target = self._safe_local_path(mapping, rel)
+                if dry_run:
+                    actions.append({"path": rel, "action": "delete"})
+                else:
+                    await asyncio.to_thread(delete_file, target)
                 deleted += 1
 
+        if dry_run:
+            return self._dry_result(mapping, "download", commit_sha, actions, unchanged, skipped)
         return {
             "mapping_id": mapping["id"],
             "direction": "download",
@@ -379,4 +417,26 @@ class SyncEngine:
             "deleted": deleted,
             "skipped": skipped,
             "at": _now_iso(),
+        }
+
+    @staticmethod
+    def _dry_result(
+        mapping: dict[str, Any], direction: str, commit_sha: str | None,
+        actions: list[dict[str, str]], unchanged: int, skipped: int,
+    ) -> dict[str, Any]:
+        return {
+            "dry_run": True,
+            "mapping_id": mapping["id"],
+            "repository": mapping["repository"],
+            "branch": mapping.get("branch") or "main",
+            "direction": direction,
+            "target": "GitHub" if direction == "upload" else "local files",
+            "commit_sha": commit_sha,
+            "at": _now_iso(),
+            "actions": sorted(actions, key=lambda item: item["path"]),
+            "create_count": sum(a["action"] == "create" for a in actions),
+            "update_count": sum(a["action"] == "update" for a in actions),
+            "delete_count": sum(a["action"] == "delete" for a in actions),
+            "unchanged": unchanged,
+            "skipped": skipped,
         }

@@ -24,6 +24,7 @@ Requires **Home Assistant OS** or **Supervised**. Container and Core installs do
 - Check for updates: compare git blob hashes. Nothing is written.
 - Upload: commit the folder to the mapped branch (creates the first commit if empty).
 - Download: write remote files onto disk. Extra local files are kept unless you opt into deletion.
+- **Dry-run previews** show planned creates, overwrites and deletions for upload/download without changing GitHub, local files or sync history.
 - Admin-only sidebar via Ingress. The API never returns the saved token.
 - Optional **automatic sync** per mapping (every 15 minutes, hourly, 6 hours, or daily): upload, download, or check-only.
 - Home Assistant persistent notification when a sync fails (or when check-only finds differences).
@@ -82,8 +83,22 @@ Local development copy: put this repository’s `github_sync/` folder into `/add
 | **Check for updates** | Lists files that differ. No writes. |
 | **Upload** | Commits local (non-ignored) files to GitHub. |
 | **Download** | Overwrites local files with remote versions (download-ignore still applies). The confirmation dialog can optionally delete local files that are not in the remote tree. |
+| **Preview (dry run)** | In Upload/Download confirmation, preview planned changes without executing. Includes deletions and respects the selected download cleanup option. |
 | **Edit** | Change folder, repo, branch, or ignore rules. |
 | **Remove** | Deletes the mapping only — not GitHub, not local files. |
+
+### Dry-run safety
+
+In an **Upload** or **Download** confirmation, choose **Preview (dry run)** rather than the execution button. The plan lists creates, overwrites, deletions, unchanged counts and skipped counts. Upload paths are relative to the repository root; download paths are relative to your mapped local folder. Only the first 400 actions are displayed; totals include the full plan.
+
+- **Upload replaces the mapped subtree**: remote files absent from the upload are planned for deletion, including files ignored locally. A nonempty repo path preserves files outside that subtree.
+- Download previews respect download-ignore and the **Delete local extras** choice (off by default).
+- Previews make read-only GitHub requests and local reads. They do not create GitHub blobs/trees/commits, change refs, write/delete local files, save sync/error metadata, or send HA notifications—even when the preview fails. In-memory progress still updates.
+- A read-only GitHub connection can preview uploads. Actual upload still requires write access. Previewing does not test write permissions, branch protection, or guarantee a later operation will succeed.
+- A plan is a point-in-time estimate, not a lock. A real sync needs a fresh confirmation and can differ if files change. Existing auto-sync schedules continue independently; preview does not pause them.
+- Truncated folder scans or GitHub trees are rejected rather than used for a partial/destructive plan. Symlink escapes and remote traversal outside the mapped folder are rejected.
+
+API: `POST api/upload` or `POST api/download` with `{"mapping_id":"…","dry_run":true}`. Download also accepts `"delete_extras":true`. Both options must be JSON booleans, not strings. Results contain `dry_run`, `actions`, `create_count`, `update_count`, `delete_count`, `unchanged`, and `skipped`; no conflict hashes or credentials are exposed.
 
 ## Default ignore
 
@@ -153,3 +168,5 @@ See `AGENTS.md` and `ROADMAP.md`.
 MIT — see [LICENSE](LICENSE).
 
 For API/authorization regression tests, install `tests/requirements.txt` and run `PYTHONPATH=github_sync/app python3 -m unittest discover -s tests -v`.
+
+Frontend request/render regressions: `node --test tests/test_frontend.cjs` (no npm dependencies).

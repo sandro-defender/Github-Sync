@@ -23,6 +23,13 @@ All notable changes to GitHub Sync are documented here.
 
 ## [Unreleased]
 
+### Dry-run previews and safety (current session)
+
+- Complete the roadmap dry-run item: Upload/Download confirmation offers **Preview (dry run)**. Direction-specific plans list creates, overwrites and deletions, including upload subtree replacement and optional download cleanup. Execution always requires a separate confirmation.
+- `POST api/upload` / `api/download` accept strict boolean `dry_run`; preview performs no GitHub mutations, local writes/deletes, metadata saves or HA notifications, including error paths. Read-only connections can preview uploads without gaining write access.
+- Reject incomplete folder scans/GitHub trees and unsafe local symlinks or remote traversal paths. Keep preview and execution path checks consistent.
+- Add nine Python dry-run regressions (filesystem/data snapshots, remote mutation guards, preview/execution parity, empty repos, ignore/cleanup and failure paths) and five dependency-free frontend request/render tests in CI. Raise the busy overlay above dialogs to prevent duplicate submissions.
+
 ### GitHub access controls (current session)
 
 - Choose read-only vs read/write operations and an explicit repository allowlist before authorizing. Select device OAuth scope (`public_read`, `public_write`, `repo`); the flow keeps its policy server-side so polling cannot widen it.

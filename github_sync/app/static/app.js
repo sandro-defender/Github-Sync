@@ -208,7 +208,7 @@ async function onAction(action, el) {
     return setState({
       confirm: {
         title: "Upload to GitHub?",
-        body: "Local files that are not ignored will be committed to the mapped branch.",
+        body: "Upload replaces the mapped repository folder. Remote files absent from the upload — including ignored files — are removed. Preview before continuing.",
         ok: "Upload",
         next: { type: "upload", id },
       },
@@ -246,6 +246,7 @@ async function onAction(action, el) {
   if (action === "preset") return applyPreset(el.dataset.preset);
   if (action === "preview") return preview();
   if (action === "ignoreSide") return setState({ ignoreSide: el.dataset.side, preview: null });
+  if (action === "dryRun") return previewSync();
   if (action === "confirmOk") return confirmOk();
   if (action === "confirmCancel") return setState({ confirm: null });
   if (action === "backDiff") return setState({ view: "list", diff: null });
@@ -386,6 +387,20 @@ async function check(id) {
   } catch (_err) {
     /* stored */
   }
+}
+
+async function previewSync() {
+  const confirm = state.confirm;
+  if (!["upload", "download"].includes(confirm?.next?.type)) return;
+  const { type, id } = confirm.next;
+  setState({ confirm: null });
+  try {
+    const diff = await run(`Previewing ${type} (no writes)…`, () => api(`api/${type}`, {
+      method: "POST",
+      body: JSON.stringify({ mapping_id: id, dry_run: true, delete_extras: Boolean(confirm.delete_extras) }),
+    }));
+    setState({ view: "diff", diff });
+  } catch (_err) { /* stored; no sync was performed */ }
 }
 
 async function confirmOk() {
@@ -864,6 +879,7 @@ function renderStepReview(e) {
 function renderDiff() {
   const d = state.diff;
   if (!d) return "";
+  if (d.dry_run) return renderDryRun(d);
   const conflictPaths = new Set((d.conflicts || []).map((f) => f.path));
   const rows = [
     ...(d.added || []).map((f) => ({ ...f, kind: "add", label: "local only" })),
@@ -906,6 +922,27 @@ function renderDiff() {
       <button class="btn" data-action="download" data-id="${esc(d.mapping_id)}">Download</button>
       <button class="btn ghost" data-action="backDiff">Back</button>
     </div>
+  </div>`;
+}
+
+function renderDryRun(d) {
+  return `<div class="card">
+    <h3>Dry run — ${esc(d.direction)} to ${esc(d.target)}</h3>
+    <p class="meta">${esc(d.repository)} @ ${esc(d.branch)} · No files, GitHub objects or sync history were changed.</p>
+    <div class="stats">
+      <div class="stat"><b>${d.create_count}</b><span>would create</span></div>
+      <div class="stat"><b>${d.update_count}</b><span>would overwrite</span></div>
+      <div class="stat"><b>${d.delete_count}</b><span>would delete</span></div>
+      <div class="stat"><b>${d.unchanged}</b><span>unchanged</span></div>
+    </div>
+    <p class="meta">${d.skipped} skipped. Paths are ${d.direction === "upload" ? "relative to the repository root" : "relative to the local mapped folder"}.</p>
+    ${d.delete_count ? `<div class="banner error">Review the deletions below. ${d.direction === "upload" ? "Upload replaces the mapped subtree, even if a remote file is ignored locally." : "Delete local extras was enabled for this preview."}</div>` : ""}
+    <table class="diff"><thead><tr><th>File</th><th>Planned action</th></tr></thead><tbody>
+      ${(d.actions || []).slice(0, 400).map(a => `<tr><td>${esc(a.path)}</td><td>${esc(a.action)}</td></tr>`).join("") || `<tr><td colspan="2">No file changes planned.</td></tr>`}
+    </tbody></table>
+    ${(d.actions || []).length > 400 ? `<p class="warning-text">Showing the first 400 of ${d.actions.length} actions. Counts above include all actions.</p>` : ""}
+    <p class="meta">This is a point-in-time plan, not a reserved transaction. A real sync requires a new confirmation and may differ if files change. An upload creates a commit even when file contents match.</p>
+    <div class="row"><button class="btn ghost" data-action="backDiff">Back to mappings</button></div>
   </div>`;
 }
 
@@ -1108,6 +1145,7 @@ function render() {
               <p class="meta">${esc(s.confirm.body)}</p>
               ${s.confirm.next?.type === "download" ? `<label class="confirm-option"><input type="checkbox" data-confirm-field="delete_extras" ${s.confirm.delete_extras ? "checked" : ""}> Delete local files that are not present in GitHub</label><p class="warning-text">This cannot be undone from the app. Ignored files are always protected.</p>` : ""}
               <div class="row">
+                ${["upload", "download"].includes(s.confirm.next?.type) ? `<button class="btn ghost" data-action="dryRun">Preview (dry run)</button>` : ""}
                 <button class="btn ${s.confirm.danger ? "danger" : "ok"}" data-action="confirmOk">${esc(s.confirm.ok || "Confirm")}</button>
                 <button class="btn ghost" data-action="confirmCancel">Cancel</button>
               </div>
