@@ -195,7 +195,8 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 - [x] Pipeline validated in CI: pull-request runs build `amd64` and `aarch64` images (~1m35s each) without pushing, so the Dockerfile and builder inputs are proven before merge (PR #7 checks).
 - [x] Release ordering fixed: `release.yml` dispatches the image publish after the version bump, so image tags match the released version.
 - [x] Publish workflow ran on `main` after the version bump and pushed both architecture images plus the multi-arch manifest for 0.4.0.
-- [ ] Verify the registry entries from a machine with ghcr.io access (`.github/scripts/check_published_images.sh 0.4.0`) — the sandbox cannot reach ghcr.io, so this is the one unverified step.
+- [ ] Verify the registry entries from a machine with ghcr.io access (`.github/scripts/check_published_images.sh 0.4.0`) and flip the three GHCR packages to **public** (GitHub default is private; one-time UI step, no API) — the sandbox can reach neither ghcr.io nor the package API, so this is the one unverified step.
+- [ ] Merge the follow-up PR #8 (pins `image:` in `config.yaml`) once that check is green.
 - [x] Cap or prune `file_shas` snapshots if `/data/github_sync.json` grows large.
 - [x] Translations beyond English for Supervisor options (de, es, fr, it).
 - [x] Store preparation: artwork within the presentation guidelines (icon 128×128, logo 250×100), app-folder `README.md` intro, and `docs/store-submission.md` with the requirement checklist + device verification list.

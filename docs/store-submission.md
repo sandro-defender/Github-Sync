@@ -50,6 +50,13 @@ preferred end state is a published multi-arch image.
    - `ghcr.io/sandro-defender/github_sync:<version>` + `:latest` (multi-arch manifest)
    If the dispatch was missed (for example when re-publishing by hand), start it
    yourself: `gh workflow run publish.yml --ref main`.
+1.5 **Make the packages public** — GitHub creates container packages as
+   *private* regardless of the repository visibility, and there is no API for
+   this, so it is a one-time manual step per package
+   (`https://github.com/users/sandro-defender/packages/container/package/<name>`
+   → *Package settings → Danger Zone → Change visibility → Public* for
+   `github_sync`, `aarch64-github_sync` and `amd64-github_sync`). Without it
+   Supervisor's anonymous pull fails with `unauthorized`.
 2. Verify from a machine with registry access:
 
    ```bash
@@ -57,7 +64,7 @@ preferred end state is a published multi-arch image.
    ```
 
    Every line must be a green ✓ — the script exits non-zero if a manifest is
-   missing.
+   missing, and prints the visibility links when the registry answers 401/403.
 3. Only then add the image to the app manifest (done for `0.4.0` in the follow-up
    PR) and ship a patch release:
 
