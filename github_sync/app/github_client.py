@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
-from typing import Any
+from typing import Any, Callable
 
 from aiohttp import ClientError, ClientSession, ClientTimeout
 
@@ -186,13 +186,26 @@ class GithubClient:
         return sha
 
     async def create_blobs(
-        self, owner: str, repo: str, files: list[tuple[str, bytes]]
+        self,
+        owner: str,
+        repo: str,
+        files: list[tuple[str, bytes]],
+        on_progress: Callable[[int, int, str], None] | None = None,
     ) -> dict[str, str]:
         semaphore = asyncio.Semaphore(BLOB_CONCURRENCY)
+        progress_lock = asyncio.Lock()
+        completed = 0
+        total = len(files)
 
         async def _one(path: str, content: bytes) -> tuple[str, str]:
+            nonlocal completed
             async with semaphore:
-                return path, await self.create_blob(owner, repo, content)
+                sha = await self.create_blob(owner, repo, content)
+            async with progress_lock:
+                completed += 1
+                if on_progress:
+                    on_progress(completed, total, path)
+            return path, sha
 
         results = await asyncio.gather(*(_one(path, content) for path, content in files))
         return dict(results)

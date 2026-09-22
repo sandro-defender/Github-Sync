@@ -78,6 +78,12 @@ class Store:
             "api_base": "https://api.github.com",
             "username": None,
             "user_id": None,
+            "oauth": {
+                "client_id": "",
+                "client_secret": "",
+                "redirect_uri": "",
+                "scope": "repo",
+            },
             "mappings": [],
         }
 
@@ -92,6 +98,11 @@ class Store:
             self.data.update(loaded)
             self.data.setdefault("mappings", [])
             self.data.setdefault("api_base", "https://api.github.com")
+            oauth = self.data.setdefault("oauth", {})
+            oauth.setdefault("client_id", "")
+            oauth.setdefault("client_secret", "")
+            oauth.setdefault("redirect_uri", "")
+            oauth.setdefault("scope", "repo")
 
     async def save(self) -> None:
         payload = json.dumps(self.data, indent=2)
@@ -105,12 +116,20 @@ class Store:
             await asyncio.to_thread(_write)
 
     def public_status(self) -> dict[str, Any]:
+        oauth = self.data.get("oauth") or {}
         return {
             "configured": bool(self.data.get("access_token")),
             "username": self.data.get("username"),
             "user_id": self.data.get("user_id"),
             "api_base": self.data.get("api_base") or "https://api.github.com",
             "mapping_count": len(self.data.get("mappings") or []),
+            "oauth": {
+                "client_id": oauth.get("client_id") or "",
+                "client_id_configured": bool(oauth.get("client_id")),
+                "client_secret_configured": bool(oauth.get("client_secret")),
+                "redirect_uri": oauth.get("redirect_uri") or "",
+                "scope": oauth.get("scope") if oauth.get("scope") in ("repo", "public_repo") else "repo",
+            },
             "defaults": {
                 "ignore_upload": DEFAULT_IGNORE_UPLOAD,
                 "ignore_download": DEFAULT_IGNORE_DOWNLOAD,
@@ -198,6 +217,29 @@ class Store:
         self.data["mappings"] = [
             item for item in self.data["mappings"] if item["id"] != mapping_id
         ]
+        await self.save()
+
+    def oauth_config(self) -> dict[str, str]:
+        oauth = self.data.get("oauth") or {}
+        return {
+            "client_id": str(oauth.get("client_id") or ""),
+            "client_secret": str(oauth.get("client_secret") or ""),
+            "redirect_uri": str(oauth.get("redirect_uri") or ""),
+            "scope": oauth.get("scope") if oauth.get("scope") in ("repo", "public_repo") else "repo",
+        }
+
+    async def save_oauth_config(self, payload: dict[str, Any]) -> None:
+        current = self.oauth_config()
+        client_id = str(payload.get("client_id") or "").strip()
+        client_secret = str(payload.get("client_secret") or "").strip() or current["client_secret"]
+        redirect_uri = str(payload.get("redirect_uri") or "").strip()
+        scope = payload.get("scope") if payload.get("scope") in ("repo", "public_repo") else current["scope"]
+        self.data["oauth"] = {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "redirect_uri": redirect_uri,
+            "scope": scope,
+        }
         await self.save()
 
     async def set_token(

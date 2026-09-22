@@ -6,7 +6,7 @@ This repository is a **Home Assistant App** (formerly add-on), slug `github_sync
 
 ## Session / git
 
-- Stay on `arena/01a0c62f-github-sync`. Do not create or push other branches.
+- Stay on `arena/01a0c65d-github-sync`. Do not create or push other branches.
 - Push only to that branch. Open/update PR against `main`.
 - After every meaningful change: update README + CHANGELOG + ROADMAP, then **commit** with a detailed message (what, why, user impact). Never `wip` / `update`.
 
@@ -35,7 +35,7 @@ This repository is a **Home Assistant App** (formerly add-on), slug `github_sync
 
 - No Home Assistant Core Python imports. This process is a container.
 - File I/O via `asyncio.to_thread`. GitHub via `aiohttp`.
-- Never return the access token or `file_shas` over HTTP.
+- Never return the access token, OAuth client secret, or `file_shas` over HTTP.
 - Never allow browse/sync outside Supervisor mounts (`paths.resolve_under_roots`).
 - Bind the server to `0.0.0.0:8099`.
 - Auto-sync: `scheduler.py` ticks every 30s; mapping fields `auto_sync`, `auto_interval_minutes` (min 5), `auto_direction`.

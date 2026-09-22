@@ -2,6 +2,15 @@
 
 All notable changes to GitHub Sync are documented here.
 
+## [Unreleased]
+
+### Added
+
+- Refreshed the Home Assistant App Store icon and repository banner with a consistent folder-and-sync visual identity; the icon is also shown in the Ingress header and browser tab.
+- Added per-blob upload progress so large uploads report completed blobs while GitHub Data API requests run concurrently.
+- Added an explicit **Delete local files that are not present in GitHub** checkbox to the Download confirmation dialog. It is off by default and still respects download-ignore rules.
+- Added optional GitHub OAuth authorization with both browser redirect and device-code flows. Users can choose private/public repository scope; PAT entry remains available, and OAuth secrets stay server-side.
+
 ## [0.2.0] - 2026-09-22
 
 ### Fixed

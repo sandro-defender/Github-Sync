@@ -52,6 +52,11 @@ const state = {
   confirm: null,
   tokenDraft: "",
   apiDraft: "https://api.github.com",
+  oauthClientIdDraft: "",
+  oauthClientSecretDraft: "",
+  oauthRedirectDraft: "",
+  oauthScopeDraft: "repo",
+  oauthDevice: null,
 };
 
 async function api(path, options = {}) {
@@ -118,6 +123,9 @@ async function refresh() {
       mappings: mappings.mappings || [],
       presets: presets.presets || {},
       apiDraft: status.api_base || "https://api.github.com",
+      oauthClientIdDraft: status.oauth?.client_id || "",
+      oauthRedirectDraft: status.oauth?.redirect_uri || "",
+      oauthScopeDraft: status.oauth?.scope || "repo",
     });
   } catch (err) {
     setState({ loading: false, error: err.message || String(err) });
@@ -191,8 +199,9 @@ async function onAction(action, el) {
     return setState({
       confirm: {
         title: "Download from GitHub?",
-        body: "Remote files will overwrite matching local files. Extra local files are kept.",
+        body: "Remote files will overwrite matching local files. Extra local files are kept unless you choose the cleanup option below.",
         ok: "Download",
+        delete_extras: false,
         next: { type: "download", id },
       },
     });
@@ -224,6 +233,11 @@ async function onAction(action, el) {
   if (action === "backDiff") return setState({ view: "list", diff: null });
   if (action === "saveToken") return saveToken();
   if (action === "clearToken") return clearToken();
+  if (action === "saveOAuth") return saveOAuthConfig();
+  if (action === "useCallback") return setState({ oauthRedirectDraft: callbackUrl() });
+  if (action === "deviceAuth") return startDeviceAuth();
+  if (action === "webAuth") return startWebAuth();
+  if (action === "cancelDevice") return cancelDeviceAuth();
 }
 
 async function browse(path) {
@@ -360,10 +374,14 @@ async function confirmOk() {
       const result = await run("Downloading from GitHub…", () =>
         api("api/download", {
           method: "POST",
-          body: JSON.stringify({ mapping_id: id, delete_extras: false }),
+          body: JSON.stringify({
+            mapping_id: id,
+            delete_extras: Boolean(confirm.delete_extras),
+          }),
         })
       );
-      toast(`Downloaded ${result.downloaded} file(s)`);
+      const removed = result.deleted ? `, removed ${result.deleted} extra file(s)` : "";
+      toast(`Downloaded ${result.downloaded} file(s)${removed}`);
       await refresh();
     }
   } catch (_err) {
@@ -400,12 +418,91 @@ async function clearToken() {
   }
 }
 
+function callbackUrl() {
+  return new URL("api/oauth/callback", window.location.href).href;
+}
+
+async function saveOAuthConfig(showToast = true) {
+  const result = await run("Saving authorization settings…", () =>
+    api("api/oauth/config", {
+      method: "POST",
+      body: JSON.stringify({
+        client_id: state.oauthClientIdDraft,
+        client_secret: state.oauthClientSecretDraft || undefined,
+        redirect_uri: state.oauthRedirectDraft,
+        scope: state.oauthScopeDraft,
+      }),
+    })
+  );
+  state.oauthClientSecretDraft = "";
+  setState({ status: result });
+  if (showToast) toast("Authorization settings saved");
+  return result;
+}
+
+async function startDeviceAuth() {
+  try {
+    await saveOAuthConfig(false);
+    const device = await run("Starting GitHub device authorization…", () =>
+      api("api/oauth/device/start", { method: "POST" })
+    );
+    setState({ oauthDevice: { ...device, status: "pending" } });
+    toast(`Enter code ${device.user_code} on GitHub`);
+    pollDeviceAuth(device.flow_id, (device.interval || 5) * 1000);
+  } catch (_err) {
+    /* stored */
+  }
+}
+
+async function pollDeviceAuth(flowId, delay) {
+  setTimeout(async () => {
+    if (!state.oauthDevice || state.oauthDevice.flow_id !== flowId) return;
+    try {
+      const result = await api("api/oauth/device/poll", {
+        method: "POST",
+        body: JSON.stringify({ flow_id: flowId }),
+      });
+      if (result.status === "pending") {
+        setState({ oauthDevice: { ...state.oauthDevice, status: "pending" } });
+        pollDeviceAuth(flowId, Math.max(1000, (result.retry_after || 5) * 1000));
+        return;
+      }
+      setState({ oauthDevice: null });
+      toast(`GitHub authorized as @${result.account?.username || "user"}`);
+      await refresh();
+    } catch (err) {
+      setState({ oauthDevice: null, error: err.message || String(err) });
+    }
+  }, delay);
+}
+
+async function cancelDeviceAuth() {
+  const flowId = state.oauthDevice?.flow_id;
+  if (flowId) await api(`api/oauth/device/${encodeURIComponent(flowId)}`, { method: "DELETE" }).catch(() => {});
+  setState({ oauthDevice: null });
+}
+
+async function startWebAuth() {
+  try {
+    await saveOAuthConfig(false);
+    const result = await run("Opening GitHub authorization…", () =>
+      api("api/oauth/web/start", {
+        method: "POST",
+        body: JSON.stringify({ return_to: window.location.pathname + window.location.search }),
+      })
+    );
+    window.location.assign(result.authorize_url);
+  } catch (_err) {
+    /* stored */
+  }
+}
+
 function renderList() {
   const s = state;
   if (s.loading) return `<p class="meta">Loading mappings…</p>`;
   if (!s.status?.configured) {
     return `<div class="empty">${SVG}<h2>Connect GitHub first</h2>
-      <p>Open Settings, paste a personal access token, then map folders.</p>
+      <p>Open Settings, paste a personal access token or use GitHub OAuth, then map folders.</p>
       <div class="row" style="justify-content:center"><button class="btn" data-action="tab" data-view="settings">Open settings</button></div></div>`;
   }
   const cards = (s.mappings || [])
@@ -673,6 +770,8 @@ function renderDiff() {
 
 function renderSettings() {
   const s = state.status || {};
+  const oauth = s.oauth || {};
+  const device = state.oauthDevice;
   return `<div class="card">
     <h3>GitHub connection</h3>
     <div class="meta">
@@ -693,6 +792,35 @@ function renderSettings() {
     </div>
     <p class="meta" style="margin-top:12px">Fine-grained: Contents Read and write. Classic: <code>repo</code>. The token is stored in this app’s <code>/data</code> volume and is never sent back to the browser.</p>
   </div>
+  <div class="card oauth-card" style="margin-top:16px">
+    <h3>Automatic GitHub authorization</h3>
+    <p class="meta">Choose a login method below. Device authorization is recommended for Home Assistant because it does not need a callback URL. Create a GitHub OAuth App first, then enter its client details here.</p>
+    <div class="oauth-grid">
+      <label class="field">OAuth App client ID
+        <input type="text" data-field-global="oauthClientIdDraft" value="${esc(state.oauthClientIdDraft)}" placeholder="Iv1.…">
+      </label>
+      <label class="field">Client secret <span class="meta">${oauth.client_secret_configured ? "(saved)" : "(required for web login)"}</span>
+        <input type="password" data-field-global="oauthClientSecretDraft" value="${esc(state.oauthClientSecretDraft)}" placeholder="${oauth.client_secret_configured ? "••••••••  (leave blank to keep)" : "enter secret"}">
+      </label>
+    </div>
+    <label class="field">Permission scope
+      <select data-field-global="oauthScopeDraft">
+        <option value="repo" ${state.oauthScopeDraft === "repo" ? "selected" : ""}>Private and public repositories (repo)</option>
+        <option value="public_repo" ${state.oauthScopeDraft === "public_repo" ? "selected" : ""}>Public repositories only (public_repo)</option>
+      </select>
+    </label>
+    <label class="field">Web OAuth callback URL
+      <input type="text" data-field-global="oauthRedirectDraft" value="${esc(state.oauthRedirectDraft)}" placeholder="${esc(callbackUrl())}">
+    </label>
+    <div class="row">
+      <button class="btn ghost" data-action="useCallback">Use this app’s callback URL</button>
+      <button class="btn ghost" data-action="saveOAuth">Save authorization settings</button>
+      <button class="btn" data-action="deviceAuth">Authorize with device code</button>
+      <button class="btn" data-action="webAuth">Authorize in browser</button>
+    </div>
+    ${device ? `<div class="oauth-device"><strong>Waiting for GitHub approval</strong><p>Open <a href="${esc(device.verification_uri_complete || device.verification_uri)}" target="_blank" rel="noopener">${esc(device.verification_uri)}</a> and enter <code>${esc(device.user_code)}</code>.</p><p class="meta">This page checks automatically. The code expires in about ${Math.ceil(Number(device.expires_in || 900) / 60)} minutes.</p><button class="btn ghost" data-action="cancelDevice">Cancel</button></div>` : ""}
+    <p class="meta" style="margin-top:12px">The OAuth client secret, temporary authorization codes, and final access token stay on the app server and are never returned to the browser. Device login uses the selected scope; web login requires registering the exact callback URL in GitHub.</p>
+  </div>
   <div class="card" style="margin-top:16px">
     <h3>How sync works</h3>
     <div class="meta">
@@ -710,7 +838,10 @@ function render() {
   root.innerHTML = `
     <div class="wrap">
       <header class="app">
-        <h1>GitHub Sync</h1>
+        <div class="brand">
+          <img src="assets/icon.png" alt="" width="32" height="32">
+          <h1>GitHub Sync</h1>
+        </div>
         ${s.status?.username ? `<span class="user-chip">@${esc(s.status.username)}</span>` : ""}
         <button class="icon-btn" data-action="refresh" title="Refresh">↻</button>
       </header>
@@ -732,6 +863,7 @@ function render() {
           ? `<div class="overlay"><div class="dialog">
               <h2>${esc(s.confirm.title)}</h2>
               <p class="meta">${esc(s.confirm.body)}</p>
+              ${s.confirm.next?.type === "download" ? `<label class="confirm-option"><input type="checkbox" data-confirm-field="delete_extras" ${s.confirm.delete_extras ? "checked" : ""}> Delete local files that are not present in GitHub</label><p class="warning-text">This cannot be undone from the app. Ignored files are always protected.</p>` : ""}
               <div class="row">
                 <button class="btn ${s.confirm.danger ? "danger" : "ok"}" data-action="confirmOk">${esc(s.confirm.ok || "Confirm")}</button>
                 <button class="btn ghost" data-action="confirmCancel">Cancel</button>
@@ -764,8 +896,16 @@ document.addEventListener("change", (ev) => {
   if (ev.target.dataset.field && state.editor) {
     state.editor[ev.target.dataset.field] = ev.target.value;
   }
+  if (ev.target.dataset.fieldGlobal) {
+    state[ev.target.dataset.fieldGlobal] = ev.target.value;
+  }
   if (ev.target.dataset.fieldBool && state.editor) {
     state.editor[ev.target.dataset.fieldBool] = ev.target.checked;
+  }
+  if (ev.target.dataset.confirmField && state.confirm) {
+    state.confirm[ev.target.dataset.confirmField] = ev.target.checked;
+    render();
+    return;
   }
   const toggle = ev.target.dataset.togglePath;
   if (!toggle || !state.editor) return;
