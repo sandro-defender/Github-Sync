@@ -6,14 +6,18 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import sys
 from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-CONFIG = ROOT / "github_sync" / "config.yaml"
-DOCKERFILE = ROOT / "github_sync" / "Dockerfile"
-VERSION_PY = ROOT / "github_sync" / "app" / "version.py"
 CHANGELOG = ROOT / "CHANGELOG.md"
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+# The version lives in three files; `app_version.py` owns reading and writing
+# them so the publish workflow can align an image without a release commit.
+from app_version import current_versions, read_config_version, write_version  # noqa: E402
 
 
 def git(*args: str) -> str:
@@ -67,41 +71,6 @@ def commit_list(since: str | None) -> list[str]:
     return lines
 
 
-def read_config_version() -> str:
-    match = re.search(r'^version:\s*"?([0-9]+\.[0-9]+\.[0-9]+)"?', CONFIG.read_text(), re.M)
-    return match.group(1) if match else "0.1.0"
-
-
-def write_version(new: str) -> None:
-    config = CONFIG.read_text(encoding="utf-8")
-    CONFIG.write_text(
-        re.sub(r'^version:\s*.*$', f'version: "{new}"', config, count=1, flags=re.M),
-        encoding="utf-8",
-    )
-    if DOCKERFILE.exists():
-        docker = DOCKERFILE.read_text(encoding="utf-8")
-        DOCKERFILE.write_text(
-            re.sub(
-                r'io\.hass\.version="[^"]+"',
-                f'io.hass.version="{new}"',
-                docker,
-                count=1,
-            ),
-            encoding="utf-8",
-        )
-    if VERSION_PY.exists():
-        version_py = VERSION_PY.read_text(encoding="utf-8")
-        VERSION_PY.write_text(
-            re.sub(
-                r'__version__\s*=\s*"[^"]+"',
-                f'__version__ = "{new}"',
-                version_py,
-                count=1,
-            ),
-            encoding="utf-8",
-        )
-
-
 def prepend_changelog(version: str, bullets: list[str]) -> str:
     today = date.today().isoformat()
     notes = "\n".join(f"- {item}" for item in bullets) or "- Maintenance release."
@@ -144,7 +113,11 @@ def main() -> None:
             handle.write(f"version={new_version}\n")
             handle.write(f"tag=v{new_version}\n")
             handle.write(f"level={level}\n")
+    versions = current_versions()
     print(f"Prepared release {new_version} ({level})")
+    for label, value in versions.items():
+        flag = "" if value == new_version or level == "initial" else "  <-- DRIFT"
+        print(f"  {label:<12} {value}{flag}")
 
 
 if __name__ == "__main__":

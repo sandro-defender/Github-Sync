@@ -6,20 +6,31 @@ name: Publish app image
 #
 # Pull requests run this workflow in build-only mode (no registry push) so a
 # broken Dockerfile is caught before merge. On main it is dispatched by
-# `.github/workflows/release.yml` once the version bump is committed, so the
-# published image always matches `version:` in config.yaml.
+# `.github/workflows/release.yml`, which passes the version it is about to
+# release and *waits* for this run: the version bump is only committed once the
+# image is verifiably in the registry, so `github_sync/config.yaml` never
+# advertises a version that cannot be installed.
 #
-# Until `image:` is set in github_sync/config.yaml, Supervisor builds the app
-# locally on the user's machine. Once the first publish below succeeded, set:
-#
-#     image: "ghcr.io/sandro-defender/github_sync"
+# Supervisor appends `:<version>` to the `image:` in config.yaml. A missing tag
+# is a hard failure ("[404] manifest unknown") with no local-build fallback, so
+# the `verify` job below re-checks the registry and fails the run when a
+# reference is absent. A green run therefore means "installable".
 #
 # Triggered by: pull requests (build only), `.github/workflows/release.yml`
-# after the version bump (dispatch), a published release, or manually:
+# before a version bump (dispatch with `version`), a published release, or
+# manually:
 #
-#     gh workflow run publish.yml --ref main
+#     gh workflow run publish.yml --ref main                  # config.yaml version
+#     gh workflow run publish.yml --ref main -f version=0.5.1 # explicit version
 #
-# Check with `.github/scripts/check_published_images.sh <version>` first.
+# Check any version with `.github/scripts/check_published_images.sh <version>`.
+#
+# Registry credentials: `secrets.GHCR_TOKEN` when it exists (a classic PAT with
+# `write:packages`, plus the `GHCR_USERNAME` repository variable), otherwise the
+# workflow's `GITHUB_TOKEN`. GITHUB_TOKEN only works while each package grants
+# this repository write access under Package settings → Manage Actions access;
+# changing a package to Public revokes that inherited access, which is why the
+# explicit PAT escape hatch exists. See docs/store-submission.md.
 #
 # Per-arch images:  ghcr.io/sandro-defender/{arch}-github_sync
 # Manifest image:   ghcr.io/sandro-defender/github_sync   (arch-independent)
@@ -31,13 +42,20 @@ on:
     paths:
       - "github_sync/**"
       - ".github/workflows/publish.yml"
-  # A merge to main runs .github/workflows/release.yml, which bumps the version
-  # and then dispatches this workflow. Pushes are not a trigger on purpose:
-  # pushes made with GITHUB_TOKEN do not start workflows anyway, and building on
-  # the pre-bump commit would publish an image with the previous version tag.
+      - ".github/scripts/**"
+  # A merge to main runs .github/workflows/release.yml, which dispatches this
+  # workflow with the version it computed and waits for it before committing the
+  # bump. Pushes are not a trigger on purpose: pushes made with GITHUB_TOKEN do
+  # not start workflows anyway, and building on the pre-bump commit without an
+  # explicit version would publish an image tagged with the previous release.
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (defaults to `version:` in github_sync/config.yaml)"
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -92,6 +110,7 @@ jobs:
           INFO_NAME: ${{ steps.info.outputs.name }}
           INFO_DESCRIPTION: ${{ steps.info.outputs.description }}
           INFO_URL: ${{ steps.info.outputs.url }}
+          REQUESTED_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
 
@@ -112,11 +131,23 @@ jobs:
           name="$(unquote "${INFO_NAME}")"
           description="$(unquote "${INFO_DESCRIPTION}")"
           url="$(unquote "${INFO_URL}")"
+          requested="$(unquote "${REQUESTED_VERSION}")"
 
           # Prefer the image from config.yaml; fall back to the registry
           # convention so the pipeline also works before `image:` is enabled.
           if [[ -z "${image}" || "${image}" == "null" ]]; then
             image="${REGISTRY_PREFIX}/${IMAGE_NAME}"
+          fi
+
+          # release.yml dispatches this workflow *before* it commits the version
+          # bump, so the requested version wins over the (still old) manifest.
+          if [[ -n "${requested}" ]]; then
+            if ! [[ "${requested}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::Requested version '${requested}' is not x.y.z."
+              exit 1
+            fi
+            echo "Publishing the requested version ${requested} (config.yaml still says ${version})."
+            version="${requested}"
           fi
 
           echo "image_name=${image##*/}" >> "$GITHUB_OUTPUT"
@@ -154,11 +185,20 @@ jobs:
         with:
           persist-credentials: false
 
+      # The image must report the version it is published as, otherwise the app's
+      # own update check compares against the wrong `__version__` and offers the
+      # update again forever. This is a no-op unless a version was requested.
+      - name: Align the packaged version with the published tag
+        env:
+          APP_VERSION: ${{ needs.prepare.outputs.version }}
+        run: python3 .github/scripts/app_version.py "${APP_VERSION}"
+
       - name: Build image (pushed on main, releases and manual runs)
         uses: home-assistant/builder/actions/build-image@2026.09.0
         with:
           arch: ${{ matrix.arch }}
-          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+          container-registry-password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+          container-registry-username: ${{ vars.GHCR_USERNAME || github.repository_owner }}
           context: "./${{ env.APP_DIR }}"
           image: ${{ matrix.image }}
           image-tags: |
@@ -171,6 +211,37 @@ jobs:
             ${{ needs.prepare.outputs.url && format('io.hass.url={0}', needs.prepare.outputs.url) || '' }}
           push: ${{ env.PUBLISH }}
           version: ${{ needs.prepare.outputs.version }}
+
+      - name: Explain a denied registry push
+        if: ${{ failure() && github.event_name != 'pull_request' }}
+        env:
+          IMAGE: ${{ matrix.image }}:${{ needs.prepare.outputs.version }}
+          REPO_SLUG: ${{ github.repository }}
+          PACKAGE_SETTINGS: https://github.com/users/sandro-defender/packages/container
+        run: |
+          cat <<EOF
+          ::error::Pushing ${IMAGE} failed. If the log says 'denied: permission_denied: write_package', GHCR no longer lets this workflow's GITHUB_TOKEN write to the package.
+
+          That happens when a package stops inheriting the linked repository's
+          permissions — most often right after it was made Public, because GitHub
+          overwrites the existing permissions when the visibility changes.
+
+          Fix it once per package (github_sync, aarch64-github_sync,
+          amd64-github_sync):
+
+            ${PACKAGE_SETTINGS}/<package> → Package settings
+              → Manage Actions access → Add repository
+              → ${REPO_SLUG} → Role: Write
+
+          Then re-run this workflow:  gh run rerun ${GITHUB_RUN_ID}
+
+          Alternative: store a classic PAT with 'write:packages' as the
+          repository secret GHCR_TOKEN (and its owner as the GHCR_USERNAME
+          variable). This workflow prefers it over GITHUB_TOKEN.
+
+          Do not bump the version to work around this — release.yml refuses to
+          advertise a version whose image is not in the registry.
+          EOF
 
   manifest:
     name: Publish multi-arch manifest
@@ -185,9 +256,33 @@ jobs:
         uses: home-assistant/builder/actions/publish-multi-arch-manifest@2026.09.0
         with:
           architectures: ${{ needs.prepare.outputs.architectures }}
-          container-registry-password: ${{ secrets.GITHUB_TOKEN }}
+          container-registry-password: ${{ secrets.GHCR_TOKEN || secrets.GITHUB_TOKEN }}
+          container-registry-username: ${{ vars.GHCR_USERNAME || github.repository_owner }}
           image-name: ${{ needs.prepare.outputs.image_name }}
           image-tags: |
             ${{ needs.prepare.outputs.version }}
             latest
           registry-prefix: ${{ needs.prepare.outputs.registry_prefix }}
+
+  # Supervisor installs `image:<version>` verbatim, so a published-but-absent
+  # manifest breaks every install and update for that release. Re-check the
+  # registry from a clean runner (anonymous pull, exactly like Supervisor) so a
+  # green publish run proves the version is installable.
+  verify:
+    name: Verify the published images
+    needs: [prepare, manifest]
+    if: ${{ github.event_name != 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v5
+
+      - name: Check GHCR for ${{ needs.prepare.outputs.version }}
+        env:
+          IMAGE: ${{ needs.prepare.outputs.image_name }}
+          REPO_SLUG: ${{ github.repository }}
+        run: |
+          OWNER="${REPO_SLUG%%/*}" bash .github/scripts/check_published_images.sh \
+            "${{ needs.prepare.outputs.version }}"

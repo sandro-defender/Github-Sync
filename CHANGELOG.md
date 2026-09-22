@@ -1,10 +1,33 @@
 # Changelog
 
+## [Unreleased]
+
+### Publishing & release pipeline (current session)
+
+- **Fixed the failure behind `Can't install ghcr.io/sandro-defender/github_sync:0.5.0: [404] manifest unknown`.** `0.5.0` was advertised in `config.yaml` while its image never reached GHCR: both publish build jobs were rejected with `denied: permission_denied: write_package`, so the multi-arch manifest job never ran. Making the three packages **public** after `0.4.0` moved them from "inherit access from the linked repository" to granular permissions, and GitHub overwrites existing permissions when that changes — silently revoking the `GITHUB_TOKEN` write access that had published `0.4.0`. Because `config.yaml` pins `image:`, Supervisor had no local-build fallback and every install/update of `0.5.0` failed.
+- **A release can no longer advertise an uninstallable version.** `release.yml` now publishes *before* it advertises: it computes the next version, dispatches `publish.yml` with `-f version=<next>`, waits for that run, re-checks GHCR anonymously the way Supervisor does, and only then commits the version bump, tag and GitHub Release. If publishing fails, `main` keeps shipping the previous installable version and the Release job turns red with the remediation in its annotations.
+- **`publish.yml` gained a `version` dispatch input and a `verify` job.** The input lets `release.yml` build the not-yet-committed version (and lets anyone republish a specific tag by hand); the `verify` job pulls all four references (`<version>` + `latest` manifest, both arch images) from a clean runner, so a green publish run now *proves* the version is installable.
+- **The image reports the version it is tagged with.** A new `Align the packaged version` step runs `.github/scripts/app_version.py` inside the build job, so an image built from the pre-bump commit still carries the right `version:` and `__version__` — without it the app's own update check would offer the same update forever.
+- **`GHCR_TOKEN` escape hatch.** `publish.yml` prefers the `GHCR_TOKEN` repository secret (a classic PAT with `write:packages`, optionally with the `GHCR_USERNAME` variable) over `GITHUB_TOKEN`, so publishing keeps working when package permissions get out of sync again.
+- **Denied pushes explain themselves.** A failing build step now prints the exact *Package settings → Manage Actions access → Add repository → Write* recovery path plus the `gh run rerun` command, as both log output and `::error::` annotations.
+- **`check_published_images.sh` distinguishes the three failure modes** — 404 (never published), 401/403 (package private) and registry unreachable (new exit code 2, previously reported as "missing") — and emits GitHub Actions annotations with the matching remediation. It also warns that making a package public revokes Actions write access, so the two browser steps are done together.
+- **Weekly audit.** `validate.yml` gained a *Published image audit* job that verifies whatever `main` currently advertises is actually pullable: it fails loudly on the weekly schedule and on demand, and only warns on a plain push (the merge commit still carries the previous version while the release job publishes the new one).
+- **Version handling de-duplicated** into `.github/scripts/app_version.py` (`read_config_version`, `current_versions`, `write_version`, plus a CLI that prints drift); `prepare_release.py` imports it and now reports all three version files, flagging any mismatch.
+- **Docs.** README gained a *When an update fails* table mapping Supervisor log lines to causes and fixes; `docs/store-submission.md` documents the one-time registry setup in the order it must be done, the per-release pipeline and how to republish by hand; `AGENTS.md` and `ROADMAP.md` record the GHCR visibility trap and the outstanding manual recovery for `0.5.0`.
+
 ## [0.5.0] - 2026-09-22
 
 - docs(store): flag GHCR package visibility before enabling image:
 - fix(publish): normalise JSON-quoted helper outputs before building tags
 - feat(release): install from the published multi-arch image
+
+### Release follow-up (shipped as 0.5.0, PR #8)
+
+- **Installs now use the published image.** `github_sync/config.yaml` pins `image: "ghcr.io/sandro-defender/github_sync"`, the multi-arch manifest published for 0.4.0, so installing or updating downloads the app instead of building it on your Home Assistant machine.
+- **Changelog structure tidied**: the detailed notes for the UI rewrite and store work moved into the `[0.4.0]` section (commit list plus explanations) instead of a floating block.
+- Image tags followed the version in `config.yaml`, with the release workflow dispatching the publish *after* the bump. **Superseded** — that ordering is what let `0.5.0` be advertised while its image failed to publish; see `[Unreleased]` for the publish-before-advertise pipeline.
+- **GHCR visibility is now documented and checked**: GitHub creates container packages as private, which would make Supervisor's anonymous pull fail with `unauthorized`; `check_published_images.sh` recognises 401/403, prints the exact “Change visibility → Public” links, and `docs/store-submission.md` lists it as the step before enabling `image:`.
+- **Fixed the publish pipeline once `image:` exists**: the `info` helper returns JSON-quoted scalars, and quotes passed through `env:` are not interpreted by the shell, so buildx saw tags like `"ghcr.io/sandro-defender/amd64-github_sync":0.4.0` and failed with “invalid reference format”. The prepare step now normalises all helper outputs itself (the pull-request build mode caught this before it could reach users).
 
 ## [0.4.0] - 2026-09-22
 
@@ -96,16 +119,6 @@ uploaded `ghcr.io/sandro-defender/{arch}-github_sync` and the multi-arch
 - Added an explicit **Delete local files that are not present in GitHub** checkbox to the Download confirmation dialog. It is off by default and still respects download-ignore rules.
 
 ### Changed
-
-## [Unreleased]
-
-### Release follow-up (current session)
-
-- **Installs now use the published image.** `github_sync/config.yaml` pins `image: "ghcr.io/sandro-defender/github_sync"`, the multi-arch manifest published for 0.4.0, so installing or updating downloads the app instead of building it on your Home Assistant machine.
-- **Changelog structure tidied**: the detailed notes for the UI rewrite and store work now live in the `[0.4.0]` section (commit list plus explanations) instead of a floating `[Unreleased]` block, and `[Unreleased]` is empty for the next session.
-- Image tags follow the version in `config.yaml` (the release workflow dispatches the publish *after* the bump). Right after a version bump the registry tag can lag by a few minutes; a failed install in that window is safe to retry.
-- **GHCR visibility is now documented and checked**: GitHub creates container packages as private, which would make Supervisor's anonymous pull fail with `unauthorized`; `check_published_images.sh` recognises 401/403, prints the exact “Change visibility → Public” links, and `docs/store-submission.md` lists it as the step before enabling `image:`.
-- **Fixed the publish pipeline once `image:` exists**: the `info` helper returns JSON-quoted scalars, and quotes passed through `env:` are not interpreted by the shell, so buildx saw tags like `"ghcr.io/sandro-defender/amd64-github_sync":0.4.0` and failed with “invalid reference format”. The prepare step now normalises all helper outputs itself (the pull-request build mode caught this before it could reach users).
 
 ## [0.3.2] - 2026-09-22
 

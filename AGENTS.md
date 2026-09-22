@@ -33,6 +33,7 @@ This repository is a **Home Assistant App** (formerly add-on), slug `github_sync
 ## Versioning
 
 - Version is `github_sync/config.yaml` → `version`. Keep the Dockerfile `io.hass.version` label and `github_sync/app/version.py` `__version__` identical.
+- `.github/scripts/app_version.py` owns reading/writing those three files (`python3 .github/scripts/app_version.py 0.5.1`); `prepare_release.py` imports it, and `publish.yml` calls it so an image built before the bump still reports the version it is tagged with. Do not duplicate that logic.
 - `.github/scripts/prepare_release.py` bumps all three files together on release; the release workflow commits `config.yaml`, `Dockerfile`, `version.py`, and `CHANGELOG.md`.
 - Merges to `main` run `.github/workflows/release.yml`.
 
@@ -45,7 +46,8 @@ This repository is a **Home Assistant App** (formerly add-on), slug `github_sync
 - Bind the server to `0.0.0.0:8099`.
 - Auto-sync: `scheduler.py` ticks every 30s; mapping fields `auto_sync`, `auto_interval_minutes` (min 5), `auto_direction`.
 - HA notifications: `ha.py` + `homeassistant_api: true` in `config.yaml`. No-op without `SUPERVISOR_TOKEN`.
-- Pre-built images: `.github/workflows/publish.yml` publishes `ghcr.io/sandro-defender/{arch}-github_sync` + the multi-arch manifest. `release.yml` dispatches it after the version bump (pushes made with `GITHUB_TOKEN` cannot trigger workflows), so the registry tag matches `version:`. `config.yaml` pins the generic manifest; verify a tag with `.github/scripts/check_published_images.sh <version>` before bumping a version by hand — a missing manifest makes installs fail instead of falling back to a local build.
+- Pre-built images: `.github/workflows/publish.yml` publishes `ghcr.io/sandro-defender/{arch}-github_sync` + the multi-arch manifest, then re-checks the registry in a `verify` job. `release.yml` dispatches it **before** committing the version bump (`gh workflow run publish.yml --ref main -f version=<next>`; pushes made with `GITHUB_TOKEN` cannot trigger workflows) and waits for it, so `config.yaml` never advertises a version whose image is missing — Supervisor pulls `<image>:<version>` and a missing manifest is a hard `[404] manifest unknown` with no local-build fallback.
+- GHCR permissions are the classic trap: making a package **public** overwrites its inherited repository permissions and revokes the `GITHUB_TOKEN` write access, so the next publish fails with `denied: permission_denied: write_package`. Re-grant it per package under *Package settings → Manage Actions access → Add repository → Write*, or set the `GHCR_TOKEN` repository secret (classic PAT with `write:packages`, plus the `GHCR_USERNAME` variable) which `publish.yml` prefers. `docs/store-submission.md` has the full order of operations; `.github/scripts/check_published_images.sh <version>` tells 404 (unpublished) from 401/403 (private) apart and prints the fix.
 - Store artwork: normalise new art with `.github/scripts/optimize_store_assets.py` (icon 128×128, logo 250×100).
 
 ## How to run tests

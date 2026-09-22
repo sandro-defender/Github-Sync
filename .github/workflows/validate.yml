@@ -11,6 +11,29 @@ permissions:
   contents: read
 
 jobs:
+  # Safety net for the failure that broke 0.5.0: `config.yaml` pins `image:`, so
+  # a version whose GHCR manifest is missing fails every install and update with
+  # "[404] manifest unknown" instead of falling back to a local build.
+  # release.yml refuses to advertise an unpublished version, and this job audits
+  # the result — weekly and on demand it fails loudly, on a plain push to main it
+  # only warns (the merge commit still carries the previous version while the
+  # release job is publishing the new one).
+  image-availability:
+    name: Published image audit
+    if: ${{ github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ github.event_name == 'push' }}
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Check the advertised version is installable
+        env:
+          REPO_SLUG: ${{ github.repository }}
+        run: |
+          OWNER="${REPO_SLUG%%/*}" bash .github/scripts/check_published_images.sh
+
   app-linter:
     name: App configuration
     runs-on: ubuntu-latest
