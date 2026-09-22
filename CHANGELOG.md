@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.2] - 2026-09-22
+
+- Complete roadmap dry-run previews without file or metadata writes
+- Add selected repository and write permissions to GitHub authorization
+- Fix Supervisor update checks and recover cleanly from fallback failures
+
 ## [0.3.1] - 2026-09-22
 
 - Merge branch 'main' into arena/01a0c6c9-github-sync
