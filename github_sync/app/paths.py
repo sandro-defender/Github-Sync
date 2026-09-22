@@ -179,9 +179,7 @@ def collect_files(
         keep_dirs: list[str] = []
         for name in dirnames:
             rel = f"{rel_current}/{name}".strip("/") if rel_current else name
-            if always.is_ignored(rel, True) or (
-                matcher.is_ignored(rel, True) and not matcher.has_negations
-            ):
+            if always.is_ignored(rel, True):
                 excluded.append(
                     {
                         "path": rel,
@@ -191,6 +189,24 @@ def collect_files(
                     }
                 )
                 continue
+            if matcher.is_ignored(rel, True) and not matcher.has_negations:
+                # Pruning is only a walk optimisation: a pruned folder's
+                # children never reach the include/exclude lists. A folder
+                # ignored by a catch-all rule (`*`/`**`, e.g. from the UI's
+                # "Uncheck all") keeps being walked instead, so its files stay
+                # visible and can be re-included individually. Hand-written
+                # folder rules (`.storage/`, presets, …) keep the fast-path.
+                pattern = matcher.matching_pattern(rel, True)
+                excluded.append(
+                    {
+                        "path": rel,
+                        "is_dir": True,
+                        "size": 0,
+                        "pattern": pattern or ALWAYS_IGNORE.strip(),
+                    }
+                )
+                if pattern not in ("*", "**"):
+                    continue
             keep_dirs.append(name)
         dirnames[:] = sorted(keep_dirs)
 

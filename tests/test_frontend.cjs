@@ -364,6 +364,130 @@ test("rendered files are escaped and the app never injects raw HTML", async () =
   }
 });
 
+test("ignore preview checkboxes uncheck, re-check and chain-negate files", async () => {
+  const preview = {
+    direction: "upload",
+    included: [
+      { path: "a.yaml", size: 10, is_dir: false },
+      { path: "sub/c.yaml", size: 6, is_dir: false },
+    ],
+    excluded: [{ path: "b.log", size: 4, is_dir: false, pattern: "*.log" }],
+    included_count: 2,
+    excluded_count: 1,
+    included_size: 16,
+    truncated: false,
+  };
+  const root = await boot({ responses: { "api/preview_ignore": preview } });
+  await modules.actions.refresh();
+  const setPreview = (included, excluded) => {
+    preview.included = included;
+    preview.excluded = excluded;
+    preview.included_count = included.length;
+    preview.excluded_count = excluded.length;
+    preview.included_size = included.reduce((sum, file) => sum + (file.size || 0), 0);
+  };
+
+  modules.actions.startNewMapping();
+  modules.state.ignoreSide.value = "upload";
+  modules.actions.patchEditor({ local_path: "homeassistant", ignore_upload: "*.log\n" });
+  modules.actions.gotoStep(3);
+  await paint();
+  assert.match(root.innerHTML, /a\.yaml/);
+
+  const checkboxOf = (name) => {
+    const row = [...root.querySelectorAll("label")].find(
+      (node) => node.classList.contains("list-row") && node.textContent.includes(name)
+    );
+    assert.ok(row, `a checkbox row exists for ${name}`);
+    return { row, input: row.querySelector("input") };
+  };
+  const toggle = (name, checked) => {
+    const { input } = checkboxOf(name);
+    input.checked = checked;
+    input.dispatchEvent({ type: "change" });
+  };
+  const rules = () => modules.state.editor.value.ignore_upload;
+
+  // Unchecking an included file excludes it with an exact rule.
+  assert.equal(checkboxOf("a.yaml").input.checked, true);
+  toggle("a.yaml", false);
+  await paint();
+  assert.match(rules(), /(^|\n)a\.yaml\n/, "uncheck adds an exact ignore line");
+
+  // Checking the now-excluded file removes that rule again.
+  setPreview([{ path: "sub/c.yaml", size: 6, is_dir: false }], [
+    { path: "a.yaml", size: 10, is_dir: false, pattern: "a.yaml" },
+    { path: "b.log", size: 4, is_dir: false, pattern: "*.log" },
+  ]);
+  await modules.actions.refreshIgnorePreview();
+  await paint();
+  assert.ok(checkboxOf("a.yaml").row.classList.contains("excluded"), "file moved to the ignored section");
+  toggle("a.yaml", true);
+  await paint();
+  assert.equal(rules().trim(), "*.log", "check removes the exact ignore line");
+
+  // "Uncheck all" appends one catch-all rule and never duplicates it.
+  const uncheckAll = findButton(root, "Uncheck all");
+  assert.ok(uncheckAll, "preview offers Uncheck all");
+  uncheckAll.click();
+  await paint();
+  assert.equal(rules().trim().split("\n").filter((line) => line.trim() === "*").length, 1, "one `*` rule added");
+  assert.match(rules(), /(^|\n)\*\n/);
+  uncheckAll.click();
+  await paint();
+  assert.equal(rules().trim().split("\n").filter((line) => line.trim() === "*").length, 1, "no duplicate `*` rule");
+  const previewCall = [...calls].reverse().find((call) => call.url === "api/preview_ignore" && call.body);
+  assert.match(previewCall.body.ignore, /(^|\n)\*(\n|$)/, "preview refresh sends the new rules");
+
+  // Ticking a nested file excluded by `*` appends a ! chain: parents, then file.
+  setPreview([], [
+    { path: "a.yaml", size: 10, is_dir: false, pattern: "*" },
+    { path: "b.log", size: 4, is_dir: false, pattern: "*" },
+    { path: "sub/c.yaml", size: 6, is_dir: false, pattern: "*" },
+  ]);
+  await modules.actions.refreshIgnorePreview();
+  await paint();
+  toggle("sub/c.yaml", true);
+  await paint();
+  assert.match(rules(), /(^|\n)!\/sub\/\n/, "parent folder is re-included first");
+  assert.match(rules(), /(^|\n)!\/sub\/c\.yaml\n/, "the file itself is re-included");
+
+  // Unticking that file again removes only its own negation, not the folder chain.
+  setPreview([{ path: "sub/c.yaml", size: 6, is_dir: false }], [
+    { path: "a.yaml", size: 10, is_dir: false, pattern: "*" },
+    { path: "b.log", size: 4, is_dir: false, pattern: "*" },
+  ]);
+  await modules.actions.refreshIgnorePreview();
+  await paint();
+  assert.equal(checkboxOf("sub/c.yaml").input.checked, true, "chained file renders checked");
+  toggle("sub/c.yaml", false);
+  await paint();
+  assert.ok(!/(^|\n)!\/sub\/c\.yaml(\n|$)/.test(rules()), "the file negation is removed");
+  assert.match(rules(), /(^|\n)!\/sub\/(\n|$)/, "ancestor negation stays for other selections");
+});
+
+test("settings links to the GitHub page that manages repository access", async () => {
+  const root = await boot();
+  modules.state.view.value = "settings";
+  await paint();
+  const oauthLink = [...root.querySelectorAll("a")].find((node) =>
+    (node.getAttribute("href") || "").startsWith("https://github.com/settings/")
+  );
+  assert.ok(oauthLink, "settings links to a GitHub configuration page");
+  assert.equal(oauthLink.getAttribute("href"), "https://github.com/settings/applications");
+  assert.equal(oauthLink.getAttribute("target"), "_blank");
+  assert.match(oauthLink.textContent, /Review authorization on GitHub/);
+
+  const tokenRoot = await boot({ status: { ...STATUS, auth_method: "token" } });
+  modules.state.view.value = "settings";
+  await paint();
+  const tokenLink = [...tokenRoot.querySelectorAll("a")].find((node) =>
+    (node.getAttribute("href") || "").includes("personal-access-tokens")
+  );
+  assert.ok(tokenLink, "token connections link to the fine-grained token page");
+  assert.match(tokenLink.textContent, /Add or remove repositories on GitHub/);
+});
+
 test("logout clears account state and returns to the connect screen", async () => {
   const root = await boot();
   await modules.actions.refresh();

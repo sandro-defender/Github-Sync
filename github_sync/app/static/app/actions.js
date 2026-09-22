@@ -253,21 +253,92 @@ export async function refreshIgnorePreview() {
 }
 
 /**
- * Toggle one path in the active ignore rules.
+ * All ignore lines that name a path exactly (anchored or not, folder or not).
+ * Used to recognise and remove hand-written or previously added exact rules.
+ */
+function exactRuleLines(path) {
+  return [path, `${path}/`, `/${path}`, `/${path}/`];
+}
+
+/** All ignore lines that re-include (`!`) a path exactly. */
+function exactNegationLines(path) {
+  return [`!${path}`, `!/${path}`, `!${path}/`, `!/${path}/`];
+}
+
+/**
+ * Negation chain that re-includes one path when a broader rule ignores it.
  *
- * Unchecking adds the path, checking removes both `path` and `path/`.
+ * Gitignore cannot re-include a file while one of its parent folders stays
+ * ignored, so the chain negates every ancestor first (`!/a/`, `!/a/b/`) and
+ * ends with the file itself (`!/a/b/c.yaml`). Anchored with a leading `/` so
+ * only this one path is affected.
+ */
+function includeChain(path) {
+  const parts = String(path).split("/").filter(Boolean);
+  const chain = [];
+  for (let index = 1; index < parts.length; index += 1) {
+    chain.push(`!/${parts.slice(0, index).join("/")}/`);
+  }
+  if (parts.length) chain.push(`!/${parts.join("/")}`);
+  return chain;
+}
+
+/**
+ * Toggle one path in the active ignore rules (a checkbox in the sync preview).
+ *
+ * `included` is the checkbox's new state:
+ *  - unchecking excludes the path — usually by adding an exact rule; when the
+ *    path was previously force-included by an auto `!` chain, only its own
+ *    negation line is removed (ancestor `!/dir/` lines are left alone: they
+ *    are harmless and may belong to other selections or hand-written rules);
+ *  - checking includes it again — by removing an exact rule that names the
+ *    path, or, when a broader pattern (a preset glob, or the `*` added by
+ *    "Uncheck all") is what excludes it, by appending the negation chain so
+ *    just this path is re-included.
  */
 export function toggleIgnoredPath(path, included) {
+  const draft = editor.value;
+  if (!draft || !path) return;
+  const field = ignoreField();
+  const current = draft[field] || "";
+  const lines = current.split("\n").map((line) => line.trimEnd());
+  const exact = exactRuleLines(path);
+  const negations = exactNegationLines(path);
+  if (included) {
+    if (lines.some((line) => exact.includes(line))) {
+      patchEditor({ [field]: lines.filter((line) => !exact.includes(line)).join("\n") });
+    } else {
+      const chain = includeChain(path).filter((line) => !lines.includes(line));
+      if (chain.length) {
+        patchEditor({ [field]: `${current.replace(/\s*$/, "")}\n${chain.join("\n")}`.trim() + "\n" });
+      }
+    }
+  } else if (lines.some((line) => negations.includes(line))) {
+    patchEditor({ [field]: lines.filter((line) => !negations.includes(line)).join("\n") });
+  } else if (!lines.some((line) => exact.includes(line))) {
+    patchEditor({ [field]: `${current.replace(/\s*$/, "")}\n${path}`.trim() + "\n" });
+  }
+  refreshIgnorePreview();
+}
+
+/**
+ * "Uncheck all" — exclude everything on the active ignore side by appending a
+ * single `*` rule. Ticking a checkbox afterwards re-includes just that file
+ * via an automatic `!` negation chain (see `toggleIgnoredPath`). Existing
+ * rules stay untouched; removing the `*` line by hand restores them.
+ */
+export function uncheckAllPaths() {
   const draft = editor.value;
   if (!draft) return;
   const field = ignoreField();
   const current = draft[field] || "";
-  const lines = current.split("\n").map((line) => line.trimEnd());
-  if (included) {
-    patchEditor({ [field]: lines.filter((line) => line !== path && line !== `${path}/`).join("\n") });
-  } else if (!lines.includes(path) && !lines.includes(`${path}/`)) {
-    patchEditor({ [field]: `${current.replace(/\s*$/, "")}\n${path}`.trim() + "\n" });
+  const lines = current.split("\n").map((line) => line.trim());
+  if (lines.includes("*") || lines.includes("**")) {
+    pushToast("Everything is already unchecked — tick files to sync them again", "info");
+    return;
   }
+  patchEditor({ [field]: `${current.replace(/\s*$/, "")}\n*`.trim() + "\n" });
+  pushToast("All files unchecked — tick the ones you want to sync", "success");
   refreshIgnorePreview();
 }
 
