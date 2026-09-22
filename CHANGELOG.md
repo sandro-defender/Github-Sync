@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.3.0] - 2026-09-22
+
+- Merge branch 'main' into arena/01a0c675-github-sync
+- feat: zero-config GitHub login via built-in device-flow client
+- feat: in-app update check with one-click updates
+
 ## [0.2.2] - 2026-09-22
 
 - Add in-app update check with one-click updates (#3)
