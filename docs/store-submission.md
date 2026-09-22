@@ -42,13 +42,14 @@ Supervisor builds the app locally on the user's machine while `config.yaml` has
 no `image:` key. That is slow and can fail on constrained hardware, so the
 preferred end state is a published multi-arch image.
 
-1. Merge the change that adds `.github/workflows/publish.yml`, then check that
-   the **Publish app image** run succeeded on `main`
-   (`gh run list --workflow=publish.yml`). Pull-request runs already prove both
-   architectures build, so this merge is what creates the registry entries. It
-   publishes:
+1. Merge the change. `release.yml` bumps the version, creates the release and
+   then dispatches **Publish app image** — the dispatch happens after the bump
+   so the image tag always equals the released version. Check the run
+   (`gh run list --workflow=publish.yml`); it publishes:
    - `ghcr.io/sandro-defender/{arch}-github_sync:<version>` per architecture
    - `ghcr.io/sandro-defender/github_sync:<version>` + `:latest` (multi-arch manifest)
+   If the dispatch was missed (for example when re-publishing by hand), start it
+   yourself: `gh workflow run publish.yml --ref main`.
 2. Verify from a machine with registry access:
 
    ```bash

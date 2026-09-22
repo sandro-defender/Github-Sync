@@ -5,12 +5,19 @@ name: Publish app image
 # (https://developers.home-assistant.io/docs/apps/publishing).
 #
 # Pull requests run this workflow in build-only mode (no registry push) so a
-# broken Dockerfile is caught before merge.
+# broken Dockerfile is caught before merge. On main it is dispatched by
+# `.github/workflows/release.yml` once the version bump is committed, so the
+# published image always matches `version:` in config.yaml.
 #
 # Until `image:` is set in github_sync/config.yaml, Supervisor builds the app
 # locally on the user's machine. Once the first publish below succeeded, set:
 #
 #     image: "ghcr.io/sandro-defender/github_sync"
+#
+# Triggered by: pull requests (build only), `.github/workflows/release.yml`
+# after the version bump (dispatch), a published release, or manually:
+#
+#     gh workflow run publish.yml --ref main
 #
 # Check with `.github/scripts/check_published_images.sh <version>` first.
 #
@@ -24,11 +31,10 @@ on:
     paths:
       - "github_sync/**"
       - ".github/workflows/publish.yml"
-  push:
-    branches: [main]
-    paths:
-      - "github_sync/**"
-      - ".github/workflows/publish.yml"
+  # A merge to main runs .github/workflows/release.yml, which bumps the version
+  # and then dispatches this workflow. Pushes are not a trigger on purpose:
+  # pushes made with GITHUB_TOKEN do not start workflows anyway, and building on
+  # the pre-bump commit would publish an image with the previous version tag.
   release:
     types: [published]
   workflow_dispatch:

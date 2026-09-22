@@ -6,6 +6,8 @@ on:
 
 permissions:
   contents: write
+  # Dispatching the image publish below needs permission to start a workflow.
+  actions: write
 
 jobs:
   release:
@@ -54,3 +56,11 @@ jobs:
           gh release create "$TAG" \
             --title "GitHub Sync ${{ steps.prep.outputs.version }}" \
             --notes-file .github/release-notes.md
+
+      # Pushes made with GITHUB_TOKEN do not trigger other workflows, so the
+      # image build has to be dispatched explicitly — and only after the version
+      # bump, otherwise the published image would carry the previous version.
+      - name: Publish the app image for this release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run publish.yml --ref main

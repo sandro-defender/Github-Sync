@@ -193,6 +193,7 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 - [x] Dry-run mode that never writes.
 - [x] Multi-arch image pipeline: `.github/workflows/publish.yml` (Home Assistant builder actions, GHCR, `{arch}` images + multi-arch manifest) and `.github/scripts/check_published_images.sh` to gate enabling `image:` in `config.yaml`.
 - [x] Pipeline validated in CI: pull-request runs build `amd64` and `aarch64` images (~1m35s each) without pushing, so the Dockerfile and builder inputs are proven before merge (PR #7 checks).
+- [x] Release ordering fixed: `release.yml` dispatches the image publish after the version bump, so image tags match the released version.
 - [ ] Run the publish workflow on `main`, verify the manifests with `.github/scripts/check_published_images.sh 0.3.3` and then set `image: "ghcr.io/sandro-defender/github_sync"` (needs a merge to `main`; the sandbox cannot reach ghcr.io).
 - [x] Cap or prune `file_shas` snapshots if `/data/github_sync.json` grows large.
 - [x] Translations beyond English for Supervisor options (de, es, fr, it).
