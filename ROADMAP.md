@@ -19,9 +19,9 @@ Requires **Home Assistant OS** or **Supervised** (Apps are not available on Cont
 
 ## Handoff for the next agent (read this first)
 
-**Branch:** `arena/01a0c675-github-sync` (do not switch branches).<br>
-**PR:** https://github.com/sandro-defender/Github-Sync/pull/3<br>
-**Version:** `0.2.1` in `github_sync/config.yaml` (also `github_sync/app/version.py` and the Dockerfile label — the release script keeps all three in sync)
+**Branch:** each Arena session is fixed to its own `arena/…` branch — work only on the branch named in your session. The previous session branch `arena/01a0c675-github-sync` is **merged** and released; start new work from a fresh branch off `main`.
+**Last PR:** https://github.com/sandro-defender/Github-Sync/pull/3 (merged) — zero-config GitHub device-flow login + in-app update check / one-click update.
+**Version:** `0.2.2` in `github_sync/config.yaml` (also `github_sync/app/version.py` and the Dockerfile label — the release script keeps all three in sync; it bumps on merge to `main` and tags the GitHub Release)
 
 **What works today**
 
@@ -40,11 +40,11 @@ Requires **Home Assistant OS** or **Supervised** (Apps are not available on Cont
 **Do not**
 
 - Add `custom_components/` or `hacs.json`. This is an App, not a HACS integration.
-- Switch git branches. Session is fixed to `arena/01a0c65d-github-sync`.
+- Switch git branches. Stay on the `arena/…` branch your session was given.
 - Put the GitHub token in API responses or in `config.yaml` options.
 - Use a `git` CLI; keep the Git Data API.
 
-**Next work (Phase 10)**
+**Next work (Phase 11)**
 
 1. Dry-run mode that never writes.
 2. Publish multi-arch images and set `image:` in `config.yaml` so Supervisor does not local-build.
@@ -81,6 +81,7 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 | 8 | Scheduling, HA notifications, progress, conflicts | Done |
 | 9 | Tests (started), store listing, multi-arch images | In progress |
 | 10 | App self-update (update check + one-click update) | Done |
+| 11 | Hardening & release readiness | In progress |
 
 ---
 
@@ -174,6 +175,17 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 - [x] UI: header version chip, Settings → **App updates** card, green "update available" banner (dismissible per version), full-screen updating overlay with polling until the new version answers
 - [x] HA persistent notification when an update is available (once per version; marker persisted in `/data`)
 - [x] Unit tests: version parsing, both update sources, entity discovery, update trigger, checker cache + notification
+- [x] Shipped in v0.2.2 (PR #3, merged 2026-09-22)
+
+---
+
+## Phase 11 — Hardening & release readiness
+
+- [ ] Dry-run mode that never writes.
+- [ ] Publish multi-arch images and set `image:` in `config.yaml` so Supervisor does not local-build.
+- [ ] Cap or prune `file_shas` snapshots if `/data/github_sync.json` grows large.
+- [ ] Translations beyond English for Supervisor options.
+- [ ] Submit to the community App store when stable.
 
 ---
 
