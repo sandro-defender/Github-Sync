@@ -24,13 +24,15 @@ Requires **Home Assistant OS** or **Supervised** (Apps are not available on Cont
 **Version:** `0.2.2` in `github_sync/config.yaml` (also `github_sync/app/version.py` and the Dockerfile label — the release script keeps all three in sync; it bumps on merge to `main` and tags the GitHub Release)
 **Branch:** `arena/01a0c675-github-sync` (do not switch branches).<br>
 **PR:** https://github.com/sandro-defender/Github-Sync/pull/3<br>
-**Version:** `0.2.1` in `github_sync/config.yaml` (also `github_sync/app/version.py` and the Dockerfile label — the release script keeps all three in sync)
+**Version:** `0.2.2` in `github_sync/config.yaml` (also `github_sync/app/version.py` and the Dockerfile label — the release script keeps all three in sync)
 
 **What works today**
 
 - Install as a custom App store repository (`repository.yaml` + `github_sync/`).
 - Ingress sidebar: token, mappings, file browser, gitignore editor, Check / Upload / Download.
-- **Zero-config GitHub login**: one-click OAuth device flow using the built-in public GitHub CLI client ID (like Home Assistant Version Control) — no OAuth App setup on github.com. Optional custom OAuth App (Advanced) adds browser login and GitHub Enterprise; selectable `repo` or `public_repo` scope; PAT entry remains available.
+- **Device-only GitHub login**: a single **Authorise with device code** button opens a popup with the code (auto-copied to the clipboard) and the github.com approval link; it signs in automatically on approval. No PAT, no OAuth App, no scope picker, no Enterprise support. Signed-in header shows a clickable `@username` menu (GitHub options, switch account, log out); a **Connect** chip shows when signed out. Legacy `oauth` config in `/data` is dropped on load.
+- Conflict snapshots (`last_sync.file_shas`) capped at 5000 entries with a `file_shas_truncated` flag (roadmap item done).
+- `store.py` mapping helpers fixed (`_public_last_sync`, `_interval`, `_direction` were missing and crashed saves/lists) and covered by `tests/test_store.py`.
 - Auto-sync per mapping (15 min / hourly / 6h / daily; upload, download, or check-only).
 - Persistent notification in Home Assistant when a sync fails (needs Supervisor `SUPERVISOR_TOKEN`; `homeassistant_api: true`).
 - Progress text polled by the UI during long jobs (`GET api/progress`), including completed upload blobs.
@@ -51,7 +53,7 @@ Requires **Home Assistant OS** or **Supervised** (Apps are not available on Cont
 
 1. Dry-run mode that never writes.
 2. Publish multi-arch images and set `image:` in `config.yaml` so Supervisor does not local-build.
-3. Cap or prune `file_shas` snapshots if `/data/github_sync.json` grows large.
+3. ~~Cap or prune `file_shas` snapshots if `/data/github_sync.json` grows large~~ — done (`MAX_FILE_SHAS = 5000`, truncation flag).
 4. Translations beyond English for Supervisor options.
 5. Submit to the community App store when stable.
 
@@ -101,8 +103,7 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 
 - [x] FastAPI server on ingress port 8099
 - [x] Persistent settings in `/data` (token never sent to the browser)
-- [x] Connect GitHub PAT from the app UI (plus GitHub Enterprise API URL)
-- [x] Optional GitHub OAuth browser/device authorization with configurable scope
+- [x] Connect GitHub from the app UI via device authorization only (popup with auto-copied code + approval link; clickable `@username` menu with options, switch account, log out)
 - [x] Health endpoint for Supervisor watchdog
 - [x] Admin-only sidebar panel (`panel_admin: true`)
 
@@ -167,6 +168,7 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 - [ ] Submit to community app store when stable
 - [x] Download UI checkbox for `delete_extras` (off by default; ignored files remain protected)
 - [x] Refresh App Store and repository branding assets
+- [x] Cap `file_shas` conflict snapshots at 5000 entries with a truncation flag
 
 ## Phase 10 — App self-update
 
@@ -205,7 +207,7 @@ github_sync/
     main.py                     FastAPI + Ingress
     store.py                    /data/github_sync.json
     github_client.py
-    oauth.py                    GitHub OAuth device/web flows + built-in zero-config device client
+    oauth.py                    GitHub OAuth device flow only (built-in client, no options)
     ignore.py
     paths.py
     sync.py
@@ -221,8 +223,7 @@ tests/                          unittest, PYTHONPATH=github_sync/app
 **Data** (`/data/github_sync.json`)
 
 - `access_token`, `api_base`, `username`, `user_id`
-- `oauth`: OAuth App client ID/secret, callback URL, and selected scope
-- `mappings[]`: folder, repo, ignore rules, auto_sync, last_sync (including private `file_shas`)
+- `mappings[]`: folder, repo, ignore rules, auto_sync, last_sync (including private `file_shas`, capped at 5000 entries)
 - `update_check`: last update-check timestamp, latest version seen, and the version already notified about
 
 **Security**

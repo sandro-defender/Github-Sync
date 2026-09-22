@@ -1,4 +1,15 @@
-"""GitHub OAuth device and browser flows for the Home Assistant App."""
+"""GitHub OAuth device flow for the Home Assistant App.
+
+Device authorization is the only sign-in method: the app shows a short
+user code, the user approves it on github.com, and the app polls until
+GitHub returns an access token. No OAuth App registration, no callback
+URL, no client secret, no token to paste.
+
+The flow uses the public GitHub CLI OAuth client ID — the same
+zero-config approach other Home Assistant apps (e.g. Home Assistant
+Version Control) use. Client IDs are not secrets: they ship with every
+client, and the device flow needs no client secret at all.
+"""
 
 from __future__ import annotations
 
@@ -7,62 +18,22 @@ import secrets
 import time
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlencode, urlsplit, urlunsplit
 
 from aiohttp import ClientSession, ClientTimeout
 
 
 GITHUB_OAUTH_BASE = "https://github.com"
+GITHUB_API_BASE = "https://api.github.com"
 DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
-ALLOWED_SCOPES = {"repo", "public_repo"}
+DEVICE_SCOPE = "repo"
 
-#: Public OAuth client ID of the GitHub CLI, used as the built-in device-flow
-#: client so users can connect with one click and no OAuth App registration —
-#: the same approach other Home Assistant apps (e.g. Home Assistant Version
-#: Control) use. Client IDs are not secrets: they ship with every client.
+#: Public OAuth client ID of the GitHub CLI, used as the built-in
+#: device-flow client so users can connect with one click.
 GITHUB_CLI_CLIENT_ID = "178c6fc778ccc68e1d6a"
 
 
 class OAuthError(Exception):
     """The GitHub OAuth service rejected or could not complete a flow."""
-
-
-def normalize_scope(scope: str | None) -> str:
-    value = (scope or "repo").strip()
-    return value if value in ALLOWED_SCOPES else "repo"
-
-
-def oauth_base_from_api(api_base: str | None) -> str:
-    """Return the OAuth host matching github.com or a GitHub Enterprise API."""
-    raw = (api_base or "https://api.github.com").strip().rstrip("/")
-    parsed = urlsplit(raw)
-    if not parsed.scheme or not parsed.netloc:
-        return GITHUB_OAUTH_BASE
-    if parsed.hostname == "api.github.com":
-        return GITHUB_OAUTH_BASE
-    path = parsed.path.removesuffix("/api/v3").rstrip("/")
-    return urlunsplit((parsed.scheme, parsed.netloc, path, "", "")).rstrip("/")
-
-
-def is_github_dot_com(api_base: str | None) -> bool:
-    """True when the configured API host is github.com (not Enterprise)."""
-    return oauth_base_from_api(api_base) == GITHUB_OAUTH_BASE
-
-
-def device_flow_client_id(configured: str | None, api_base: str | None) -> str:
-    """Client ID for the device flow.
-
-    A user-configured OAuth App client ID always wins. Otherwise, on
-    github.com, the built-in public GitHub CLI client is used so the flow
-    works out of the box. GitHub Enterprise has no built-in client — return
-    an empty string so the caller can ask for a locally registered App.
-    """
-    configured = (configured or "").strip()
-    if configured:
-        return configured
-    if is_github_dot_com(api_base):
-        return GITHUB_CLI_CLIENT_ID
-    return ""
 
 
 async def _post_form(session: ClientSession, url: str, values: dict[str, str]) -> dict[str, Any]:
@@ -80,7 +51,6 @@ async def _post_form(session: ClientSession, url: str, values: dict[str, str]) -
             if "json" in content_type:
                 data = json.loads(text or "{}")
             else:
-                # GitHub Enterprise versions may return form-encoded OAuth responses.
                 from urllib.parse import parse_qs
 
                 data = {key: values[0] for key, values in parse_qs(text).items()}
@@ -97,54 +67,30 @@ async def _post_form(session: ClientSession, url: str, values: dict[str, str]) -
 class DeviceFlow:
     flow_id: str
     device_code: str
-    client_id: str
-    oauth_base: str
     interval: int
     expires_at: float
     last_poll: float = 0.0
 
 
-@dataclass
-class WebFlow:
-    state: str
-    client_id: str
-    client_secret: str
-    redirect_uri: str
-    return_to: str
-    oauth_base: str
-    scope: str
-    expires_at: float
-
-
 class OAuthBroker:
-    """Keep short-lived OAuth codes and states out of persistent app data."""
+    """Keep short-lived device codes out of persistent app data."""
 
     def __init__(self) -> None:
         self.device_flows: dict[str, DeviceFlow] = {}
-        self.web_flows: dict[str, WebFlow] = {}
 
     def _cleanup(self) -> None:
         now = time.time()
         self.device_flows = {
             key: flow for key, flow in self.device_flows.items() if flow.expires_at > now
         }
-        self.web_flows = {
-            key: flow for key, flow in self.web_flows.items() if flow.expires_at > now
-        }
 
-    async def start_device(
-        self,
-        session: ClientSession,
-        *,
-        client_id: str,
-        scope: str,
-        oauth_base: str,
-    ) -> dict[str, Any]:
+    async def start_device(self, session: ClientSession) -> dict[str, Any]:
+        """Begin a device authorization and return the code + GitHub link."""
         self._cleanup()
         data = await _post_form(
             session,
-            f"{oauth_base}/login/device/code",
-            {"client_id": client_id, "scope": normalize_scope(scope)},
+            f"{GITHUB_OAUTH_BASE}/login/device/code",
+            {"client_id": GITHUB_CLI_CLIENT_ID, "scope": DEVICE_SCOPE},
         )
         if data.get("error"):
             raise OAuthError(data.get("error_description") or data["error"])
@@ -158,8 +104,6 @@ class OAuthBroker:
         self.device_flows[flow_id] = DeviceFlow(
             flow_id=flow_id,
             device_code=device_code,
-            client_id=client_id,
-            oauth_base=oauth_base,
             interval=interval,
             expires_at=time.time() + expires_in,
         )
@@ -167,11 +111,10 @@ class OAuthBroker:
         return {
             "flow_id": flow_id,
             "user_code": user_code,
-            "verification_uri": verification_uri or f"{oauth_base}/login/device",
+            "verification_uri": verification_uri or f"{GITHUB_OAUTH_BASE}/login/device",
             "verification_uri_complete": data.get("verification_uri_complete"),
             "expires_in": expires_in,
             "interval": interval,
-            "scope": normalize_scope(scope),
         }
 
     async def poll_device(self, session: ClientSession, flow_id: str) -> dict[str, Any]:
@@ -188,9 +131,9 @@ class OAuthBroker:
         flow.last_poll = now
         data = await _post_form(
             session,
-            f"{flow.oauth_base}/login/oauth/access_token",
+            f"{GITHUB_OAUTH_BASE}/login/oauth/access_token",
             {
-                "client_id": flow.client_id,
+                "client_id": GITHUB_CLI_CLIENT_ID,
                 "device_code": flow.device_code,
                 "grant_type": DEVICE_GRANT,
             },
@@ -209,61 +152,6 @@ class OAuthBroker:
             raise OAuthError("GitHub did not return an access token")
         self.device_flows.pop(flow_id, None)
         return {"status": "authorized", "access_token": token}
-
-    def start_web(
-        self,
-        *,
-        client_id: str,
-        client_secret: str,
-        redirect_uri: str,
-        return_to: str,
-        scope: str,
-        oauth_base: str,
-    ) -> dict[str, str]:
-        self._cleanup()
-        state = secrets.token_urlsafe(32)
-        self.web_flows[state] = WebFlow(
-            state=state,
-            client_id=client_id,
-            client_secret=client_secret,
-            redirect_uri=redirect_uri,
-            return_to=return_to,
-            oauth_base=oauth_base,
-            scope=normalize_scope(scope),
-            expires_at=time.time() + 600,
-        )
-        params = {
-            "client_id": client_id,
-            "redirect_uri": redirect_uri,
-            "scope": normalize_scope(scope),
-            "state": state,
-        }
-        return {"authorize_url": f"{oauth_base}/login/oauth/authorize?{urlencode(params)}"}
-
-    async def finish_web(
-        self, session: ClientSession, *, code: str, state: str
-    ) -> tuple[WebFlow, str]:
-        self._cleanup()
-        flow = self.web_flows.pop(state, None)
-        if not flow:
-            raise OAuthError("Invalid or expired OAuth state")
-        data = await _post_form(
-            session,
-            f"{flow.oauth_base}/login/oauth/access_token",
-            {
-                "client_id": flow.client_id,
-                "client_secret": flow.client_secret,
-                "code": code,
-                "redirect_uri": flow.redirect_uri,
-                "state": state,
-            },
-        )
-        if data.get("error"):
-            raise OAuthError(data.get("error_description") or data["error"])
-        token = str(data.get("access_token") or "")
-        if not token:
-            raise OAuthError("GitHub did not return an access token")
-        return flow, token
 
     def cancel_device(self, flow_id: str) -> None:
         self.device_flows.pop(flow_id, None)

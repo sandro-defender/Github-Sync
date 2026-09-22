@@ -20,8 +20,24 @@ All notable changes to GitHub Sync are documented here.
 
 ### Added
 
-- **Zero-config GitHub login.** Settings now leads with **Connect with GitHub**: a one-click OAuth device flow that works out of the box on github.com using the public GitHub CLI client ID (the same approach as the Home Assistant Version Control app) — no OAuth App registration, no callback URL, no client secret. Users choose the scope, press the button, and enter the short code GitHub shows them.
-- `GET api/status` exposes `oauth.builtin_device_flow` so the UI can show a hint when the built-in client is unavailable (GitHub Enterprise).
+- **Device-code popup.** **Authorise with device code** (Settings, header, empty Mappings page) opens a popup with the short code — auto-copied to the clipboard, click to copy again — plus an **Open GitHub** approval link, live approval polling, and expiry countdown. It closes by itself once approved.
+- **Clickable `@username` header menu.** While signed in, the username chip opens a GitHub menu: **GitHub options**, **Switch account**, and **Log out**. A **Connect** chip shows in the header when signed out.
+- **Capped conflict snapshots (roadmap).** `last_sync.file_shas` is capped at 5000 entries (`MAX_FILE_SHAS` in `sync.py`) so `/data/github_sync.json` stays small for huge folders; truncated snapshots record `file_shas_truncated`/`file_shas_total`, and the public API exposes the flag (never the hashes).
+- New unit tests: device-flow broker (start/poll/cancel/expiry), store mapping round-trip and validation helpers, and file-sha capping.
+
+### Changed
+
+- Device authorization is now the only sign-in method — no configuration options, no scope picker. `POST api/oauth/device/start` needs no setup; legacy `oauth` config in `/data` is dropped on load.
+
+### Removed
+
+- Personal access token entry (`POST api/token`), custom OAuth App settings (`POST api/oauth/config`), browser OAuth flow (`POST api/oauth/web/start`, `GET api/oauth/callback`), scope picker, and GitHub Enterprise API URL support.
+
+### Fixed
+
+- `store.py` crashed with `NameError` when saving a mapping or listing non-empty mappings (missing `_interval`, `_direction`, `_public_last_sync` helpers). All three are implemented and covered by tests.
+
+
 - **In-app update check and one-click updates.** The app checks for a newer version of itself in the background (every 30 minutes) and on demand: the header shows the installed version, an "App updates" card in Settings reports the latest version and source, and a green banner with **Update now** appears when a new version exists. Updates are installed through Home Assistant's update entity (`update/install` service), so the Supervisor's redownload + restart happens immediately and the sidebar reconnects automatically. A Home Assistant persistent notification (once per version) is raised when an update is available. Update sources: Supervisor App store (`/addons/self/info`) with a fallback to the public GitHub release of this repository for local development.
 - Runtime version module (`github_sync/app/version.py`) kept in sync with `config.yaml` and the Dockerfile label by the release script; `GET api/status` now reports `version`.
 - New endpoints: `GET api/updates` (cached status), `POST api/updates/check` (force check), `POST api/updates/install` (start update via Home Assistant).
@@ -30,12 +46,9 @@ All notable changes to GitHub Sync are documented here.
 - Refreshed the Home Assistant App Store icon and repository banner with a consistent folder-and-sync visual identity; the icon is also shown in the Ingress header and browser tab.
 - Added per-blob upload progress so large uploads report completed blobs while GitHub Data API requests run concurrently.
 - Added an explicit **Delete local files that are not present in GitHub** checkbox to the Download confirmation dialog. It is off by default and still respects download-ignore rules.
-- Added optional GitHub OAuth authorization with both browser redirect and device-code flows. Users can choose private/public repository scope; PAT entry remains available, and OAuth secrets stay server-side.
 
 ### Changed
 
-- Custom OAuth App settings (client ID/secret, callback URL, browser login) moved to an **Advanced** section: a saved client ID takes precedence over the built-in client for device login and is required for browser login and GitHub Enterprise; PAT entry remains available.
-- The personal access token card is now secondary to the one-click **Connect with GitHub** login in Settings.
 
 ## [0.2.0] - 2026-09-22
 

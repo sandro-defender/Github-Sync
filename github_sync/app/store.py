@@ -9,7 +9,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from oauth import is_github_dot_com
+from oauth import GITHUB_API_BASE
 from version import __version__
 
 DEFAULT_IGNORE_UPLOAD = """\
@@ -78,15 +78,9 @@ class Store:
         self._lock = asyncio.Lock()
         self.data: dict[str, Any] = {
             "access_token": "",
-            "api_base": "https://api.github.com",
+            "api_base": GITHUB_API_BASE,
             "username": None,
             "user_id": None,
-            "oauth": {
-                "client_id": "",
-                "client_secret": "",
-                "redirect_uri": "",
-                "scope": "repo",
-            },
             "mappings": [],
         }
 
@@ -100,12 +94,10 @@ class Store:
         if loaded:
             self.data.update(loaded)
             self.data.setdefault("mappings", [])
-            self.data.setdefault("api_base", "https://api.github.com")
-            oauth = self.data.setdefault("oauth", {})
-            oauth.setdefault("client_id", "")
-            oauth.setdefault("client_secret", "")
-            oauth.setdefault("redirect_uri", "")
-            oauth.setdefault("scope", "repo")
+            self.data.setdefault("api_base", GITHUB_API_BASE)
+            # Legacy config from when PAT / custom OAuth Apps were supported.
+            # Device authorization is now the only sign-in method.
+            self.data.pop("oauth", None)
 
     async def save(self) -> None:
         payload = json.dumps(self.data, indent=2)
@@ -119,24 +111,13 @@ class Store:
             await asyncio.to_thread(_write)
 
     def public_status(self) -> dict[str, Any]:
-        oauth = self.data.get("oauth") or {}
         return {
             "configured": bool(self.data.get("access_token")),
             "version": __version__,
             "username": self.data.get("username"),
             "user_id": self.data.get("user_id"),
-            "api_base": self.data.get("api_base") or "https://api.github.com",
+            "api_base": self.data.get("api_base") or GITHUB_API_BASE,
             "mapping_count": len(self.data.get("mappings") or []),
-            "oauth": {
-                "client_id": oauth.get("client_id") or "",
-                "client_id_configured": bool(oauth.get("client_id")),
-                "client_secret_configured": bool(oauth.get("client_secret")),
-                "redirect_uri": oauth.get("redirect_uri") or "",
-                "scope": oauth.get("scope") if oauth.get("scope") in ("repo", "public_repo") else "repo",
-                # True when the one-click device flow works without the user
-                # registering an OAuth App (github.com built-in client).
-                "builtin_device_flow": is_github_dot_com(self.data.get("api_base")),
-            },
             "defaults": {
                 "ignore_upload": DEFAULT_IGNORE_UPLOAD,
                 "ignore_download": DEFAULT_IGNORE_DOWNLOAD,
@@ -226,34 +207,9 @@ class Store:
         ]
         await self.save()
 
-    def oauth_config(self) -> dict[str, str]:
-        oauth = self.data.get("oauth") or {}
-        return {
-            "client_id": str(oauth.get("client_id") or ""),
-            "client_secret": str(oauth.get("client_secret") or ""),
-            "redirect_uri": str(oauth.get("redirect_uri") or ""),
-            "scope": oauth.get("scope") if oauth.get("scope") in ("repo", "public_repo") else "repo",
-        }
-
-    async def save_oauth_config(self, payload: dict[str, Any]) -> None:
-        current = self.oauth_config()
-        client_id = str(payload.get("client_id") or "").strip()
-        client_secret = str(payload.get("client_secret") or "").strip() or current["client_secret"]
-        redirect_uri = str(payload.get("redirect_uri") or "").strip()
-        scope = payload.get("scope") if payload.get("scope") in ("repo", "public_repo") else current["scope"]
-        self.data["oauth"] = {
-            "client_id": client_id,
-            "client_secret": client_secret,
-            "redirect_uri": redirect_uri,
-            "scope": scope,
-        }
-        await self.save()
-
-    async def set_token(
-        self, token: str, api_base: str, username: str | None, user_id: Any
-    ) -> None:
+    async def set_token(self, token: str, username: str | None, user_id: Any) -> None:
         self.data["access_token"] = token
-        self.data["api_base"] = api_base or "https://api.github.com"
+        self.data["api_base"] = GITHUB_API_BASE
         self.data["username"] = username
         self.data["user_id"] = user_id
         await self.save()
@@ -263,3 +219,42 @@ class Store:
         self.data["username"] = None
         self.data["user_id"] = None
         await self.save()
+
+
+def _public_last_sync(last: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Last-sync metadata safe for the browser (private `file_shas` stripped)."""
+    if not last:
+        return None
+    public: dict[str, Any] = {
+        "at": last.get("at"),
+        "direction": last.get("direction"),
+        "commit_sha": last.get("commit_sha"),
+        "html_url": last.get("html_url"),
+        "uploaded": last.get("uploaded"),
+        "downloaded": last.get("downloaded"),
+    }
+    if last.get("file_shas_truncated"):
+        public["file_shas_truncated"] = True
+        public["file_shas_total"] = last.get("file_shas_total")
+    return public
+
+
+def _interval(value: Any, default: Any) -> int:
+    """Validated auto-sync interval in minutes (minimum 5)."""
+    try:
+        minutes = int(value)
+    except (TypeError, ValueError):
+        try:
+            return max(5, int(default))
+        except (TypeError, ValueError):
+            return 60
+    return max(5, minutes)
+
+
+def _direction(value: Any, default: Any) -> str:
+    """Validated auto-sync direction (upload, download, or check-only)."""
+    if value in ("upload", "download", "check"):
+        return str(value)
+    if default in ("upload", "download", "check"):
+        return str(default)
+    return "upload"

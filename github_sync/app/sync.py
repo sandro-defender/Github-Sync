@@ -23,6 +23,29 @@ from paths import (
 
 DEFAULT_COMMIT_MESSAGE = "chore(ha): sync {name} from Home Assistant"
 
+#: Maximum file hashes kept per mapping in the conflict-detection snapshot
+#: (`last_sync.file_shas` in /data). Keeps github_sync.json small for huge
+#: folders; conflict flags then cover only the kept (alphabetically first)
+#: files, and the snapshot records that it was truncated.
+MAX_FILE_SHAS = 5000
+
+
+def cap_file_shas(
+    shas: dict[str, str] | None,
+) -> tuple[dict[str, str] | None, bool, int]:
+    """Cap a file-sha snapshot at MAX_FILE_SHAS entries.
+
+    Returns (snapshot, truncated, total). A None snapshot passes through
+    untouched; anything at or under the cap is returned as-is.
+    """
+    if not shas:
+        return (shas, False, 0)
+    total = len(shas)
+    if total <= MAX_FILE_SHAS:
+        return (shas, False, total)
+    kept = {path: shas[path] for path in sorted(shas)[:MAX_FILE_SHAS]}
+    return (kept, True, total)
+
 
 def git_blob_sha(data: bytes) -> str:
     header = f"blob {len(data)}\0".encode()
