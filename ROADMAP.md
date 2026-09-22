@@ -27,6 +27,7 @@ Requires **Home Assistant OS** or **Supervised** (Apps are not available on Cont
 
 - Install as a custom App store repository (`repository.yaml` + `github_sync/`).
 - Ingress sidebar: token, mappings, file browser, gitignore editor, Check / Upload / Download.
+- Optional GitHub OAuth browser and device-code authorization with selectable `repo` or `public_repo` scope; PAT entry remains available.
 - Auto-sync per mapping (15 min / hourly / 6h / daily; upload, download, or check-only).
 - Persistent notification in Home Assistant when a sync fails (needs Supervisor `SUPERVISOR_TOKEN`; `homeassistant_api: true`).
 - Progress text polled by the UI during long jobs (`GET api/progress`), including completed upload blobs.
@@ -95,6 +96,7 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 - [x] FastAPI server on ingress port 8099
 - [x] Persistent settings in `/data` (token never sent to the browser)
 - [x] Connect GitHub PAT from the app UI (plus GitHub Enterprise API URL)
+- [x] Optional GitHub OAuth browser/device authorization with configurable scope
 - [x] Health endpoint for Supervisor watchdog
 - [x] Admin-only sidebar panel (`panel_admin: true`)
 
@@ -175,6 +177,7 @@ github_sync/
     main.py                     FastAPI + Ingress
     store.py                    /data/github_sync.json
     github_client.py
+    oauth.py                    GitHub OAuth browser/device flows
     ignore.py
     paths.py
     sync.py
@@ -188,6 +191,7 @@ tests/                          unittest, PYTHONPATH=github_sync/app
 **Data** (`/data/github_sync.json`)
 
 - `access_token`, `api_base`, `username`, `user_id`
+- `oauth`: OAuth App client ID/secret, callback URL, and selected scope
 - `mappings[]`: folder, repo, ignore rules, auto_sync, last_sync (including private `file_shas`)
 
 **Security**
