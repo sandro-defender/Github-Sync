@@ -107,7 +107,7 @@ GitHub Sync checks for a newer version of **itself** in the background (every 30
 - **Update now** — installs the new version immediately. The app finds its own Home Assistant update entity (hassio integration) and calls the `update/install` service; Home Assistant then redownloads the image through the App store and restarts the app. The sidebar briefly disconnects and comes back on its own, then shows the new version in the header.
 - When an update is available, the app also raises a Home Assistant persistent notification (once per version).
 
-Update sources: the Supervisor App store (`/addons/self/info` — the same data the App store UI uses), falling back to the public GitHub release of this repository when the app runs outside Home Assistant (local development).
+Update sources: the Supervisor App store (`http://supervisor/addons/self/info`, **not** `/api/addons/self/info`), falling back to public GitHub releases when Supervisor is unavailable or during local development. The self endpoint needs no additional Supervisor role. Successful fallbacks show a warning rather than a failed-check error; one-click install is offered only for a Supervisor-confirmed update. Errors clear on a successful retry.
 
 Note: the Supervisor intentionally forbids an app from updating *itself* directly (`App github_sync can't update itself!`), which is why the one-click update goes through Home Assistant's update entity. On very old Home Assistant versions without the update entity, the app tells you to update from **Settings → Apps** instead.
 

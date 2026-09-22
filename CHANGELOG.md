@@ -23,6 +23,12 @@ All notable changes to GitHub Sync are documented here.
 
 ## [Unreleased]
 
+### Fixed (current session)
+
+- Correct the Supervisor self-info URL (remove `/api`), unwrap the real `result`/`data` response, and accept repository-prefixed app slugs. No elevated Supervisor API permission is needed.
+- Clear stale update errors after recovery, distinguish successful GitHub fallbacks from failures, suppress install controls for unconfirmed releases, and immediately surface rejected install requests.
+- Test real Supervisor envelopes, malformed payloads, fallback and recovery. Release-version assertions no longer depend on an outdated installed version.
+
 ### Added
 
 - **Device-code popup.** **Authorise with device code** (Settings, header, empty Mappings page) opens a popup with the short code — auto-copied to the clipboard, click to copy again — plus an **Open GitHub** approval link, live approval polling, and expiry countdown. It closes by itself once approved.

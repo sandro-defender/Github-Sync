@@ -86,7 +86,11 @@ async function api(path, options = {}) {
   } catch (_err) {
     data = { detail: text };
   }
-  if (!res.ok) throw new Error(data.detail || res.statusText || "Request failed");
+  if (!res.ok) {
+    const error = new Error(data.detail || res.statusText || "Request failed");
+    error.status = res.status;
+    throw error;
+  }
   return data;
 }
 
@@ -427,7 +431,8 @@ async function checkUpdatesNow() {
       api("api/updates/check", { method: "POST" })
     );
     setState({ updates });
-    if (updates.update_available) toast(`Version ${updates.latest_version} is available`);
+    if (updates.error) toast("Update check failed — see Settings");
+    else if (updates.update_available) toast(`Version ${updates.latest_version} is available`);
     else toast("GitHub Sync is up to date");
   } catch (_err) {
     /* stored */
@@ -441,6 +446,10 @@ async function updateAppNow(from) {
   } catch (err) {
     // Home Assistant restarts this container as part of the update, so the
     // response is often cut short. Keep waiting for the app to come back.
+    if (err.status && err.status < 500) {
+      setState({ updating: false, error: err.message });
+      return;
+    }
     console.warn("Update request did not answer:", err.message || err);
   }
   const deadline = Date.now() + 180000;
@@ -577,7 +586,7 @@ function renderUpdateBanner() {
   return `<div class="banner update-banner">
     <span>⬆️ <strong>New version v${esc(up.latest_version)}</strong> of GitHub Sync is available — you have v${esc(up.current_version || "unknown")}.</span>
     <span class="row" style="margin-top:0">
-      <button class="btn ok" data-action="updateNow">Update now</button>
+      ${up.source === "supervisor" && !up.error ? `<button class="btn ok" data-action="updateNow">Update now</button>` : `<span class="meta">Check the Home Assistant App store to install.</span>`}
       <button class="btn ghost" data-action="dismissUpdate">Later</button>
     </span>
   </div>`;
@@ -936,7 +945,7 @@ function renderDevicePopup() {
 function renderAppUpdates() {
   const up = state.updates || {};
   const current = up.current_version || state.status?.version || "unknown";
-  const canUpdate = Boolean(up.update_available && up.source === "supervisor");
+  const canUpdate = Boolean(up.update_available && up.source === "supervisor" && !up.error);
   const sourceLabel =
     up.source === "supervisor"
       ? "Home Assistant App store"
@@ -949,6 +958,7 @@ function renderAppUpdates() {
       Current: <strong>v${esc(current)}</strong>${up.latest_version ? ` · Latest: <strong>v${esc(up.latest_version)}</strong>` : ""}<br>
       Source: ${esc(sourceLabel)}${up.checked_at ? ` · Checked ${esc(relTime(up.checked_at))}` : ""}
       ${up.error ? `<br><span style="color:var(--err)">${esc(up.error)}</span>` : ""}
+      ${up.warning ? `<br>Fallback used: ${esc(up.warning)}` : ""}
     </div>
     ${
       up.update_available
@@ -959,7 +969,7 @@ function renderAppUpdates() {
       <p class="meta" style="margin-top:10px">In-app updates need the Home Assistant Supervisor (App store). Update this app from its install source instead.</p>`
         : `<div class="row"><button class="btn ghost" data-action="checkUpdates">Check for app updates</button></div>
       <p class="meta" style="margin-top:10px">${
-        up.latest_version
+        up.error ? "Could not verify updates. Try again or check the App store." : up.latest_version
           ? `You have the latest version (v${esc(current)}).`
           : "Checks run every 30 minutes in the background. The button performs an immediate check."
       }</p>`

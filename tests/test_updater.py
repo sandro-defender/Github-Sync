@@ -27,7 +27,7 @@ from updater import (  # noqa: E402
     version_label,
 )
 
-SV_SELF_INFO = "http://supervisor/api/addons/self/info"
+SV_SELF_INFO = "http://supervisor/addons/self/info"
 CORE_STATES = "http://supervisor/core/api/states"
 CORE_INSTALL = "http://supervisor/core/api/services/update/install"
 
@@ -84,7 +84,7 @@ def self_info(
     update_available: bool | None = None,
 ) -> dict:
     info: dict = {
-        "slug": "github_sync",
+        "slug": "a1b2c3_github_sync",
         "name": "GitHub Sync",
         "version": version,
         "version_latest": version_latest,
@@ -93,7 +93,7 @@ def self_info(
     }
     if update_available is not None:
         info["update_available"] = update_available
-    return info
+    return {"result": "ok", "data": info}
 
 
 def update_entity(title: str = "GitHub Sync", latest: str | None = "0.2.2", entity_id: str | None = None) -> dict:
@@ -160,6 +160,11 @@ class SupervisorSourceTests(unittest.IsolatedAsyncioTestCase):
         assert state is not None
         self.assertFalse(state["update_available"])
 
+    async def test_invalid_envelope_rejected(self) -> None:
+        for payload in ({"result": "error", "message": "Forbidden"}, {"result": "ok", "data": []}):
+            with self.assertRaises(UpdateError):
+                await supervisor_update_state(FakeSession({SV_SELF_INFO: payload}), "tok")
+
     async def test_missing_latest_version_returns_none(self) -> None:
         session = FakeSession({SV_SELF_INFO: self_info(version_latest=None)})
         self.assertIsNone(await supervisor_update_state(session, "tok"))
@@ -167,11 +172,11 @@ class SupervisorSourceTests(unittest.IsolatedAsyncioTestCase):
 
 class GithubSourceTests(unittest.IsolatedAsyncioTestCase):
     async def test_releases_latest(self) -> None:
-        session = FakeSession({GH_LATEST: {"tag_name": "v0.3.0"}})
+        session = FakeSession({GH_LATEST: {"tag_name": "v9.3.0"}})
         state = await github_update_state(session)
         assert state is not None
         self.assertEqual(state["source"], "github")
-        self.assertEqual(state["latest_version"], "0.3.0")
+        self.assertEqual(state["latest_version"], "9.3.0")
         self.assertEqual(state["current_version"], updater.__version__)
         self.assertTrue(state["update_available"])
 
@@ -357,13 +362,28 @@ class CheckerTests(unittest.IsolatedAsyncioTestCase):
         os.environ["SUPERVISOR_TOKEN"] = "tok"
         routes = {
             SV_SELF_INFO: ClientConnectionError("supervisor down"),
-            GH_LATEST: {"tag_name": "v0.2.3"},
+            GH_LATEST: {"tag_name": "v9.2.3"},
         }
         _, state, _ = await self._make_checker(routes)
         self.assertEqual(state["source"], "github")
-        self.assertEqual(state["latest_version"], "0.2.3")
+        self.assertEqual(state["latest_version"], "9.2.3")
         self.assertTrue(state["update_available"])
-        self.assertIn("Supervisor update check failed", state["error"])
+        self.assertIsNone(state["error"])
+        self.assertIn("Supervisor update check failed", state["warning"])
+
+    async def test_error_clears_after_recovery(self) -> None:
+        os.environ["SUPERVISOR_TOKEN"] = "tok"
+        checker, state, session = await self._make_checker({
+            SV_SELF_INFO: UpdateError("403: Forbidden"),
+            GH_LATEST: ClientConnectionError("offline"),
+        })
+        self.assertIsNotNone(state["error"])
+        session.routes[SV_SELF_INFO] = self_info()
+        with mock.patch.object(updater, "notify_ha", new=self.notif):
+            state = await checker.check(force=True)
+        self.assertIsNone(state["error"])
+        self.assertIsNone(state["warning"])
+        self.assertEqual(state["source"], "supervisor")
 
     async def test_github_when_no_supervisor_token(self) -> None:
         os.environ.pop("SUPERVISOR_TOKEN", None)

@@ -19,12 +19,10 @@ Requires **Home Assistant OS** or **Supervised** (Apps are not available on Cont
 
 ## Handoff for the next agent (read this first)
 
-**Branch:** each Arena session is fixed to its own `arena/…` branch — work only on the branch named in your session. The previous session branch `arena/01a0c675-github-sync` is **merged** and released; start new work from a fresh branch off `main`.
-**Last PR:** https://github.com/sandro-defender/Github-Sync/pull/3 (merged) — zero-config GitHub device-flow login + in-app update check / one-click update.
-**Version:** `0.2.2` in `github_sync/config.yaml` (also `github_sync/app/version.py` and the Dockerfile label — the release script keeps all three in sync; it bumps on merge to `main` and tags the GitHub Release)
-**Branch:** `arena/01a0c675-github-sync` (do not switch branches).<br>
-**PR:** https://github.com/sandro-defender/Github-Sync/pull/3<br>
-**Version:** `0.2.2` in `github_sync/config.yaml` (also `github_sync/app/version.py` and the Dockerfile label — the release script keeps all three in sync)
+**Session branch:** `arena/01a0c6e1-github-sync` (stay on the branch provided by your Arena session).
+**Base version:** `0.3.1` in config.yaml, Dockerfile and version.py. Release automation bumps all three on merge.
+**Current work:** Supervisor 403 fix complete (correct URL + response envelope, fallback/recovery tests); configurable GitHub access and dry-run previews are in progress.
+**Validation:** 59 unit tests passing after the update-check fix. Local Python environment: `.venv`.
 
 **What works today**
 
@@ -71,7 +69,7 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 
 ## Current status
 
-**Active phase:** 10 (self-update done; polish continues)
+**Active phase:** 11 (access controls, dry-run safety and release readiness)
 
 | Phase | Name | Status |
 | --- | --- | --- |
@@ -172,6 +170,8 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 
 ## Phase 10 — App self-update
 
+- [x] Fix Supervisor 403: correct self-info URL, unwrap response envelope, handle repository-prefixed slugs and clear stale errors.
+
 - [x] Runtime version in `github_sync/app/version.py` (kept in sync with `config.yaml` + Dockerfile label by `.github/scripts/prepare_release.py`)
 - [x] Background update check every 30 min (`updater.py`), first check ~20 s after start, cached + forceable
 - [x] Update sources: Supervisor `/addons/self/info` (App store truth) with public GitHub-release fallback for local dev
@@ -188,7 +188,7 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 
 - [ ] Dry-run mode that never writes.
 - [ ] Publish multi-arch images and set `image:` in `config.yaml` so Supervisor does not local-build.
-- [ ] Cap or prune `file_shas` snapshots if `/data/github_sync.json` grows large.
+- [x] Cap or prune `file_shas` snapshots if `/data/github_sync.json` grows large.
 - [ ] Translations beyond English for Supervisor options.
 - [ ] Submit to the community App store when stable.
 
