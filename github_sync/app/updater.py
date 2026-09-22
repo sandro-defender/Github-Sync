@@ -42,7 +42,7 @@ from version import APP_NAME, APP_REPO, __version__
 
 _LOGGER = logging.getLogger(__name__)
 
-SUPERVISOR_API = "http://supervisor/api"
+SUPERVISOR_API = "http://supervisor"
 SUPERVISOR_CORE = "http://supervisor/core/api"
 API_TIMEOUT = ClientTimeout(total=30)
 
@@ -126,8 +126,14 @@ async def supervisor_update_state(session: ClientSession, token: str) -> dict[st
     info = await _get_json(
         session, f"{SUPERVISOR_API}/addons/self/info", _auth_headers(token)
     )
-    if not isinstance(info, dict) or info.get("slug") not in (None, "github_sync"):
-        return None
+    # Supervisor wraps responses in {"result": "ok", "data": {...}}.
+    # The self endpoint already identifies this app; installed slugs include
+    # a repository hash (e.g. abc123_github_sync), not just github_sync.
+    if not isinstance(info, dict) or info.get("result") != "ok":
+        raise UpdateError("Supervisor returned an unsuccessful response")
+    info = info.get("data")
+    if not isinstance(info, dict):
+        raise UpdateError("Supervisor returned invalid app information")
     current = version_label(info.get("version")) or __version__
     latest = version_label(info.get("version_latest"))
     if latest is None:
@@ -301,6 +307,8 @@ class UpdateChecker:
                 return dict(self._state)
             self._last_attempt = time.time()
             state = self.snapshot()
+            state["error"] = None
+            state["warning"] = None
             token = supervisor_token()
             state["supervisor"] = bool(token)
             checked = False
@@ -322,11 +330,18 @@ class UpdateChecker:
                 except (ClientError, TimeoutError, UpdateError) as err:
                     state["error"] = (state.get("error") or "Update check failed") + f" ({err})"
                     _LOGGER.debug("GitHub update check failed: %s", err)
+            if checked:
+                # A successful fallback is useful information, not a failed check.
+                state["warning"] = state.get("error")
+                state["error"] = None
+            else:
+                state["update_available"] = False
             if not checked and not state.get("error"):
                 state["error"] = "No update source is available."
             self._state = state
             await self._persist()
-            await self._maybe_notify()
+            if checked:
+                await self._maybe_notify()
             return dict(state)
 
     # -- persistence + notifications ---------------------------------------

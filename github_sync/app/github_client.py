@@ -6,6 +6,10 @@ import asyncio
 import base64
 from typing import Any, Callable
 
+from urllib.parse import unquote, urlsplit
+
+from access import AccessDenied, require_access
+
 from aiohttp import ClientError, ClientSession, ClientTimeout
 
 API_VERSION = "2022-11-28"
@@ -28,7 +32,8 @@ class GithubNotFound(GithubAPIError):
 class GithubClient:
     """Thin async wrapper around GitHub's REST API."""
 
-    def __init__(self, session: ClientSession, token: str, api_base: str) -> None:
+    def __init__(self, session: ClientSession, token: str, api_base: str, access: dict[str, Any] | None = None) -> None:
+        self.access = access
         self._session = session
         self._token = token
         self.api_base = api_base.rstrip("/")
@@ -51,6 +56,14 @@ class GithubClient:
         allow_404: bool = False,
     ) -> Any:
         url = path if path.startswith("http") else f"{self.api_base}{path}"
+        parsed = urlsplit(url)
+        if (parsed.scheme, parsed.netloc) != (urlsplit(self.api_base).scheme, urlsplit(self.api_base).netloc):
+            raise AccessDenied("Refusing to send GitHub credentials to another host")
+        segments = unquote(parsed.path).split("/")
+        if any(segment in (".", "..") or "\\" in segment for segment in segments):
+            raise AccessDenied("Unsafe GitHub API path")
+        if len(segments) >= 4 and segments[1] == "repos":
+            require_access(self.access, "/".join(segments[2:4]), write=method.upper() != "GET")
         timeout = ClientTimeout(total=60)
         try:
             async with self._session.request(
@@ -120,6 +133,9 @@ class GithubClient:
             if len(batch) < 100:
                 break
             page += 1
+        if self.access is not None:
+            allowed = set(self.access["repositories"])
+            items = [repo for repo in items if (repo.get("full_name") or "").lower() in allowed]
         return items
 
     async def list_branches(self, owner: str, repo: str) -> list[str]:

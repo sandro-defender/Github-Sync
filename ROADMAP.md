@@ -19,28 +19,27 @@ Requires **Home Assistant OS** or **Supervised** (Apps are not available on Cont
 
 ## Handoff for the next agent (read this first)
 
-**Branch:** each Arena session is fixed to its own `arena/…` branch — work only on the branch named in your session. The previous session branch `arena/01a0c675-github-sync` is **merged** and released; start new work from a fresh branch off `main`.
-**Last PR:** https://github.com/sandro-defender/Github-Sync/pull/3 (merged) — zero-config GitHub device-flow login + in-app update check / one-click update.
-**Version:** `0.2.2` in `github_sync/config.yaml` (also `github_sync/app/version.py` and the Dockerfile label — the release script keeps all three in sync; it bumps on merge to `main` and tags the GitHub Release)
-**Branch:** `arena/01a0c675-github-sync` (do not switch branches).<br>
-**PR:** https://github.com/sandro-defender/Github-Sync/pull/3<br>
-**Version:** `0.2.2` in `github_sync/config.yaml` (also `github_sync/app/version.py` and the Dockerfile label — the release script keeps all three in sync)
+**Session branch:** `arena/01a0c6e1-github-sync` (stay on the branch provided by your Arena session).
+**Base version:** `0.3.1` in config.yaml, Dockerfile and version.py. Release automation bumps all three on merge.
+**Current work:** Supervisor 403 fix complete (correct URL + response envelope, fallback/recovery tests); configurable GitHub access complete; dry-run upload/download previews complete. All changes are committed on this session branch; release version remains managed by the merge workflow.
+**Validation:** 81 Python tests and 5 frontend request/render tests passing, plus JavaScript syntax check. Local Python environment: `.venv`. Full browser testing was blocked by a Chromium download TLS/network error; real HA Supervisor/device approval still needs integration verification.
 
 **What works today**
 
 - Install as a custom App store repository (`repository.yaml` + `github_sync/`).
 - Ingress sidebar: token, mappings, file browser, gitignore editor, Check / Upload / Download.
-- **Device-only GitHub login**: a single **Authorise with device code** button opens a popup with the code (auto-copied to the clipboard) and the github.com approval link; it signs in automatically on approval. No PAT, no OAuth App, no scope picker, no Enterprise support. Signed-in header shows a clickable `@username` menu (GitHub options, switch account, log out); a **Connect** chip shows when signed out. Legacy `oauth` config in `/data` is dropped on load.
+- **Configurable GitHub access:** choose read-only/read-write and selected repositories before device login; choose OAuth scope, or connect a fine-grained token for GitHub-enforced restrictions. OAuth allowlists are explicitly labelled app-enforced. Settings can narrow existing connections; policies cover manual/automatic operations and Git Data writes. Legacy connections remain unrestricted until configured. Logout clears local credentials, not GitHub grants.
 - Conflict snapshots (`last_sync.file_shas`) capped at 5000 entries with a `file_shas_truncated` flag (roadmap item done).
 - `store.py` mapping helpers fixed (`_public_last_sync`, `_interval`, `_direction` were missing and crashed saves/lists) and covered by `tests/test_store.py`.
 - Auto-sync per mapping (15 min / hourly / 6h / daily; upload, download, or check-only).
 - Persistent notification in Home Assistant when a sync fails (needs Supervisor `SUPERVISOR_TOKEN`; `homeassistant_api: true`).
 - Progress text polled by the UI during long jobs (`GET api/progress`), including completed upload blobs.
 - Three-way **conflict** flag on Check after at least one successful upload/download (uses stored `file_shas` in `/data`, stripped from the public API).
+- **Dry runs:** Upload/Download confirmation offers a read-only plan with create/overwrite/delete counts, no persisted metadata or notifications. Upload replacement includes remote deletions; download respects its separate ignore and cleanup settings. Failed/truncated/unsafe plans are rejected without writes.
 - Download confirmation can opt into deleting local extras; it is off by default and respects download-ignore rules.
 - Refreshed App Store icon and repository banner; the icon is also used in the Ingress header and browser tab.
 - **In-app update check + one-click update**: background check every 30 min (Supervisor `/addons/self/info`, GitHub-release fallback), header version chip, Settings → App updates card, green banner with **Update now**, HA persistent notification once per new version. The update itself is triggered through Home Assistant's update entity (`update/install`) because the Supervisor forbids an app updating itself.
-- Unit tests: `PYTHONPATH=github_sync/app python3 -m unittest discover -s tests -v` (needs `aiohttp` for `test_sync_hash` and `test_updater`).
+- Tests: install `tests/requirements.txt`; run `PYTHONPATH=github_sync/app python3 -m unittest discover -s tests -v` and `node --test tests/test_frontend.cjs`. CI runs both plus frontend syntax checks.
 
 **Do not**
 
@@ -49,13 +48,15 @@ Requires **Home Assistant OS** or **Supervised** (Apps are not available on Cont
 - Put the GitHub token in API responses or in `config.yaml` options.
 - Use a `git` CLI; keep the Git Data API.
 
-**Next work (Phase 10)**
+**Next work (Phase 11)**
 
-1. Dry-run mode that never writes.
-2. Publish multi-arch images and set `image:` in `config.yaml` so Supervisor does not local-build.
-3. ~~Cap or prune `file_shas` snapshots if `/data/github_sync.json` grows large~~ — done (`MAX_FILE_SHAS = 5000`, truncation flag).
-4. Translations beyond English for Supervisor options.
+1. Verify these changes on a real HA OS/Supervised installation: update check, device authorization, GitHub fine-grained read-only/restricted repos, auto-sync denial and previews.
+2. Publish multi-arch images and set `image:` in `config.yaml` once the matching images exist so Supervisor does not local-build. Do not set `image:` before a working publish pipeline.
+3. Translations beyond English for Supervisor options.
+4. Further sync hardening: preserve Git tree modes/non-blob entries, improve large-blob handling and concurrency protections.
 5. Submit to the community App store when stable.
+
+Completed readiness items: no-write dry-run previews and capped `file_shas` snapshots (`MAX_FILE_SHAS = 5000`).
 
 **Local run**
 
@@ -71,7 +72,7 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 
 ## Current status
 
-**Active phase:** 10 (self-update done; polish continues)
+**Active phase:** 11 (access controls, dry-run safety and release readiness)
 
 | Phase | Name | Status |
 | --- | --- | --- |
@@ -103,7 +104,7 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 
 - [x] FastAPI server on ingress port 8099
 - [x] Persistent settings in `/data` (token never sent to the browser)
-- [x] Connect GitHub from the app UI via device authorization only (popup with auto-copied code + approval link; clickable `@username` menu with options, switch account, log out)
+- [x] Connect GitHub from the app UI via selectable device scopes or a fine-grained token (device popup with auto-copied code + approval link; clickable `@username` menu with options, switch account, log out)
 - [x] Health endpoint for Supervisor watchdog
 - [x] Admin-only sidebar panel (`panel_admin: true`)
 
@@ -162,7 +163,7 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 ## Phase 9 — Polish
 
 - [x] unittest for ignore matcher, path sandbox, SHA, scheduler due-dates
-- [ ] Dry-run mode that never writes
+- [x] Dry-run mode that never writes
 - [x] Per-blob upload progress
 - [ ] Publish multi-arch images (`image:` in config.yaml)
 - [ ] Submit to community app store when stable
@@ -171,6 +172,8 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 - [x] Cap `file_shas` conflict snapshots at 5000 entries with a truncation flag
 
 ## Phase 10 — App self-update
+
+- [x] Fix Supervisor 403: correct self-info URL, unwrap response envelope, handle repository-prefixed slugs and clear stale errors.
 
 - [x] Runtime version in `github_sync/app/version.py` (kept in sync with `config.yaml` + Dockerfile label by `.github/scripts/prepare_release.py`)
 - [x] Background update check every 30 min (`updater.py`), first check ~20 s after start, cached + forceable
@@ -186,9 +189,11 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 
 ## Phase 11 — Hardening & release readiness
 
-- [ ] Dry-run mode that never writes.
+- [x] Configurable GitHub access, explicit OAuth limitations, optional fine-grained token, server-side enforcement and tests.
+
+- [x] Dry-run mode that never writes.
 - [ ] Publish multi-arch images and set `image:` in `config.yaml` so Supervisor does not local-build.
-- [ ] Cap or prune `file_shas` snapshots if `/data/github_sync.json` grows large.
+- [x] Cap or prune `file_shas` snapshots if `/data/github_sync.json` grows large.
 - [ ] Translations beyond English for Supervisor options.
 - [ ] Submit to the community App store when stable.
 
@@ -207,7 +212,8 @@ github_sync/
     main.py                     FastAPI + Ingress
     store.py                    /data/github_sync.json
     github_client.py
-    oauth.py                    GitHub OAuth device flow only (built-in client, no options)
+    access.py                   repository allowlist and read/write validation
+    oauth.py                    GitHub device flow with selectable scopes and flow-bound access policy
     ignore.py
     paths.py
     sync.py
@@ -222,7 +228,7 @@ tests/                          unittest, PYTHONPATH=github_sync/app
 
 **Data** (`/data/github_sync.json`)
 
-- `access_token`, `api_base`, `username`, `user_id`
+- `access_token`, `api_base`, `username`, `user_id`, `access` (read/write mode and repository allowlist), `auth_method`, `requested_scope`
 - `mappings[]`: folder, repo, ignore rules, auto_sync, last_sync (including private `file_shas`, capped at 5000 entries)
 - `update_check`: last update-check timestamp, latest version seen, and the version already notified about
 

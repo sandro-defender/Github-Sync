@@ -51,6 +51,7 @@ const state = {
   diff: null,
   confirm: null,
   devicePopup: null,
+  authSetup: null,
   userMenuOpen: false,
   updates: {},
   updating: false,
@@ -86,7 +87,11 @@ async function api(path, options = {}) {
   } catch (_err) {
     data = { detail: text };
   }
-  if (!res.ok) throw new Error(data.detail || res.statusText || "Request failed");
+  if (!res.ok) {
+    const error = new Error(data.detail || res.statusText || "Request failed");
+    error.status = res.status;
+    throw error;
+  }
   return data;
 }
 
@@ -203,7 +208,7 @@ async function onAction(action, el) {
     return setState({
       confirm: {
         title: "Upload to GitHub?",
-        body: "Local files that are not ignored will be committed to the mapped branch.",
+        body: "Upload replaces the mapped repository folder. Remote files absent from the upload — including ignored files — are removed. Preview before continuing.",
         ok: "Upload",
         next: { type: "upload", id },
       },
@@ -241,6 +246,7 @@ async function onAction(action, el) {
   if (action === "preset") return applyPreset(el.dataset.preset);
   if (action === "preview") return preview();
   if (action === "ignoreSide") return setState({ ignoreSide: el.dataset.side, preview: null });
+  if (action === "dryRun") return previewSync();
   if (action === "confirmOk") return confirmOk();
   if (action === "confirmCancel") return setState({ confirm: null });
   if (action === "backDiff") return setState({ view: "list", diff: null });
@@ -257,14 +263,19 @@ async function onAction(action, el) {
   }
   if (action === "dismissUpdate") return dismissUpdate((state.updates || {}).latest_version);
   if (action === "checkUpdates") return checkUpdatesNow();
-  if (action === "authDevice") return startDeviceAuth();
+  if (action === "authDevice") return openAuthSetup();
+  if (action === "manageAccess") return openAuthSetup(true);
+  if (action === "closeAuthSetup") return setState({ authSetup: null });
+  if (action === "startSelectedAuth") return startDeviceAuth();
+  if (action === "connectToken") return connectToken();
+  if (action === "saveAccess") return saveAccess();
   if (action === "copyCode") return copyDeviceCode();
   if (action === "cancelDevice") return cancelDeviceAuth();
   if (action === "toggleUserMenu") return setState({ userMenuOpen: !state.userMenuOpen });
   if (action === "logout") return logout();
   if (action === "switchAccount") {
     setState({ userMenuOpen: false });
-    return startDeviceAuth();
+    return openAuthSetup();
   }
 }
 
@@ -378,6 +389,20 @@ async function check(id) {
   }
 }
 
+async function previewSync() {
+  const confirm = state.confirm;
+  if (!["upload", "download"].includes(confirm?.next?.type)) return;
+  const { type, id } = confirm.next;
+  setState({ confirm: null });
+  try {
+    const diff = await run(`Previewing ${type} (no writes)…`, () => api(`api/${type}`, {
+      method: "POST",
+      body: JSON.stringify({ mapping_id: id, dry_run: true, delete_extras: Boolean(confirm.delete_extras) }),
+    }));
+    setState({ view: "diff", diff });
+  } catch (_err) { /* stored; no sync was performed */ }
+}
+
 async function confirmOk() {
   const confirm = state.confirm;
   setState({ confirm: null });
@@ -427,7 +452,8 @@ async function checkUpdatesNow() {
       api("api/updates/check", { method: "POST" })
     );
     setState({ updates });
-    if (updates.update_available) toast(`Version ${updates.latest_version} is available`);
+    if (updates.error) toast("Update check failed — see Settings");
+    else if (updates.update_available) toast(`Version ${updates.latest_version} is available`);
     else toast("GitHub Sync is up to date");
   } catch (_err) {
     /* stored */
@@ -441,6 +467,10 @@ async function updateAppNow(from) {
   } catch (err) {
     // Home Assistant restarts this container as part of the update, so the
     // response is often cut short. Keep waiting for the app to come back.
+    if (err.status && err.status < 500) {
+      setState({ updating: false, error: err.message });
+      return;
+    }
     console.warn("Update request did not answer:", err.message || err);
   }
   const deadline = Date.now() + 180000;
@@ -494,13 +524,53 @@ async function copyTextToClipboard(text) {
   }
 }
 
+function openAuthSetup(editing = false) {
+  const access = state.status.access;
+  setState({ userMenuOpen: false, error: null, authSetup: {
+    editing,
+    mode: access?.mode || "read",
+    scope: state.status.requested_scope || "public_read",
+    repositories: (access?.repositories || []).join("\n"),
+  } });
+}
+
+function selectedAccess() {
+  return {
+    mode: state.authSetup.mode,
+    repositories: state.authSetup.repositories.split(/[\n,]+/).map(s => s.trim()).filter(Boolean),
+  };
+}
+
+async function saveAccess() {
+  const access = selectedAccess();
+  try {
+    const status = await run("Saving access limits…", () => api("api/access", { method: "POST", body: JSON.stringify(access) }));
+    setState({ status, authSetup: null, repos: null, branches: [] });
+    toast("GitHub access limits saved");
+  } catch (_err) { /* stored */ }
+}
+
+async function connectToken() {
+  const field = document.getElementById("github-token");
+  const token = field?.value || "";
+  if (field) field.value = "";
+  const access = selectedAccess();
+  try {
+    await run("Connecting GitHub…", () => api("api/token", { method: "POST", body: JSON.stringify({ token, access }) }));
+    setState({ authSetup: null, repos: null, branches: [] });
+    await refresh();
+  } catch (_err) { /* token is deliberately not kept in UI state */ }
+}
+
 async function startDeviceAuth() {
-  if (state.devicePopup) return;
+  if (state.devicePopup || !state.authSetup) return;
+  const options = { scope: state.authSetup.scope, access: selectedAccess() };
   try {
     const device = await run("Starting GitHub authorization…", () =>
-      api("api/oauth/device/start", { method: "POST" })
+      api("api/oauth/device/start", { method: "POST", body: JSON.stringify(options) })
     );
     setState({
+      authSetup: null,
       devicePopup: { ...device, status: "pending", copied: false, error: null },
     });
     const copied = await copyTextToClipboard(device.user_code);
@@ -537,7 +607,7 @@ async function pollDeviceAuth(flowId, delay) {
         pollDeviceAuth(flowId, Math.max(1000, (result.retry_after || 5) * 1000));
         return;
       }
-      setState({ devicePopup: null });
+      setState({ devicePopup: null, repos: null, branches: [] });
       toast(`GitHub authorized as @${result.account?.username || "user"}`);
       await refresh();
     } catch (err) {
@@ -562,7 +632,7 @@ async function cancelDeviceAuth() {
 async function logout() {
   try {
     await run("Signing out…", () => api("api/token", { method: "DELETE" }));
-    setState({ userMenuOpen: false });
+    setState({ userMenuOpen: false, repos: null, branches: [], authSetup: null });
     toast("Signed out from GitHub");
     await refresh();
   } catch (_err) {
@@ -577,7 +647,7 @@ function renderUpdateBanner() {
   return `<div class="banner update-banner">
     <span>⬆️ <strong>New version v${esc(up.latest_version)}</strong> of GitHub Sync is available — you have v${esc(up.current_version || "unknown")}.</span>
     <span class="row" style="margin-top:0">
-      <button class="btn ok" data-action="updateNow">Update now</button>
+      ${up.source === "supervisor" && !up.error ? `<button class="btn ok" data-action="updateNow">Update now</button>` : `<span class="meta">Check the Home Assistant App store to install.</span>`}
       <button class="btn ghost" data-action="dismissUpdate">Later</button>
     </span>
   </div>`;
@@ -809,6 +879,7 @@ function renderStepReview(e) {
 function renderDiff() {
   const d = state.diff;
   if (!d) return "";
+  if (d.dry_run) return renderDryRun(d);
   const conflictPaths = new Set((d.conflicts || []).map((f) => f.path));
   const rows = [
     ...(d.added || []).map((f) => ({ ...f, kind: "add", label: "local only" })),
@@ -854,6 +925,27 @@ function renderDiff() {
   </div>`;
 }
 
+function renderDryRun(d) {
+  return `<div class="card">
+    <h3>Dry run — ${esc(d.direction)} to ${esc(d.target)}</h3>
+    <p class="meta">${esc(d.repository)} @ ${esc(d.branch)} · No files, GitHub objects or sync history were changed.</p>
+    <div class="stats">
+      <div class="stat"><b>${d.create_count}</b><span>would create</span></div>
+      <div class="stat"><b>${d.update_count}</b><span>would overwrite</span></div>
+      <div class="stat"><b>${d.delete_count}</b><span>would delete</span></div>
+      <div class="stat"><b>${d.unchanged}</b><span>unchanged</span></div>
+    </div>
+    <p class="meta">${d.skipped} skipped. Paths are ${d.direction === "upload" ? "relative to the repository root" : "relative to the local mapped folder"}.</p>
+    ${d.delete_count ? `<div class="banner error">Review the deletions below. ${d.direction === "upload" ? "Upload replaces the mapped subtree, even if a remote file is ignored locally." : "Delete local extras was enabled for this preview."}</div>` : ""}
+    <table class="diff"><thead><tr><th>File</th><th>Planned action</th></tr></thead><tbody>
+      ${(d.actions || []).slice(0, 400).map(a => `<tr><td>${esc(a.path)}</td><td>${esc(a.action)}</td></tr>`).join("") || `<tr><td colspan="2">No file changes planned.</td></tr>`}
+    </tbody></table>
+    ${(d.actions || []).length > 400 ? `<p class="warning-text">Showing the first 400 of ${d.actions.length} actions. Counts above include all actions.</p>` : ""}
+    <p class="meta">This is a point-in-time plan, not a reserved transaction. A real sync requires a new confirmation and may differ if files change. An upload creates a commit even when file contents match.</p>
+    <div class="row"><button class="btn ghost" data-action="backDiff">Back to mappings</button></div>
+  </div>`;
+}
+
 function renderSettings() {
   const s = state.status || {};
   return `${renderGithubCard(s)}
@@ -873,7 +965,7 @@ function renderGithubCard(s) {
   if (!s.configured) {
     return `<div class="card">
     <h3>Connect with GitHub</h3>
-    <p class="meta">One-click login — no token to paste. Press the button, open the GitHub link, and enter the short code. The code is copied to your clipboard automatically and this page signs you in as soon as you approve it.</p>
+    <p class="meta">Choose repository and write access first, then use a device code or a fine-grained token. With a device code, open the GitHub link and enter the short code. The code is copied to your clipboard automatically and this page signs you in as soon as you approve it.</p>
     <div class="row">
       <button class="btn" data-action="authDevice">Authorise with device code</button>
     </div>
@@ -881,6 +973,8 @@ function renderGithubCard(s) {
   }
   return `<div class="card">
     <h3>GitHub connection</h3>
+    <p class="meta">${s.access ? `${s.access.mode === "write" ? "Read/write" : "Read-only GitHub access"} · ${s.access.repositories.length} selected repositories` : "Legacy connection: unrestricted app access. Choose access limits below."}</p>
+    <div class="row"><button class="btn" data-action="manageAccess">Repository &amp; write access</button></div>
     <div class="meta">
       Signed in as <strong>@${esc(s.username)}</strong><br>
       Mounts: ${esc((s.roots || []).join(", ") || "none")}<br>
@@ -903,6 +997,46 @@ function renderUserMenu() {
     <button class="btn ghost user-menu-btn" data-action="switchAccount">Switch account</button>
     <button class="btn danger user-menu-btn" data-action="logout">Log out</button>
   </div>`;
+}
+
+function renderAuthSetup() {
+  const a = state.authSetup;
+  if (!a) return "";
+  return `<div class="overlay"><div class="dialog auth-dialog" role="dialog" aria-modal="true" aria-label="GitHub access">
+    <h2>${a.editing ? "GitHub access limits" : "Choose GitHub access"}</h2>
+    <p class="meta">These limits are enforced by this app for manual and automatic sync. Read-only blocks GitHub uploads; downloads can still write local files.</p>
+    <label class="field">GitHub operations
+      <select data-auth-field="mode">
+        <option value="read" ${a.mode === "read" ? "selected" : ""}>Read-only (check and download)</option>
+        <option value="write" ${a.mode === "write" ? "selected" : ""}>Read and write (also upload)</option>
+      </select>
+    </label>
+    <label class="field">Selected repositories — owner/name, one per line
+      <textarea data-auth-field="repositories" placeholder="your-name/home-assistant">${esc(a.repositories)}</textarea>
+    </label>
+    <p class="meta">Only these repositories can be synced. An empty list allows none. This does not grant rights your GitHub account or token does not have.</p>
+    ${a.editing ? `<button class="btn" data-action="saveAccess">Save access limits</button>` : `
+    <label class="field">Device-code OAuth scope
+      <select data-auth-field="scope">
+        <option value="public_read" ${a.scope === "public_read" ? "selected" : ""}>Public repositories — read (no repository scope)</option>
+        <option value="public_write" ${a.scope === "public_write" ? "selected" : ""}>Public repositories — read/write (public_repo)</option>
+        <option value="repo" ${a.scope === "repo" ? "selected" : ""}>Public and private repositories (repo)</option>
+      </select>
+    </label>
+    <p class="warning-text">GitHub OAuth scopes apply broadly, NOT only to the repositories above. GitHub has no read-only private-repo OAuth scope, and an existing GitHub CLI grant may be broader. The app limits above do not narrow the token itself.</p>
+    <button class="btn" data-action="startSelectedAuth">Continue with device code</button>
+    <details style="margin-top:16px"><summary>Restrict permissions on GitHub itself (fine-grained token)</summary>
+      <p class="meta">On GitHub select a resource owner, <strong>Only select repositories</strong>, and your repositories. Set <strong>Contents</strong> to Read-only or Read and write; Metadata read access is automatic. Workflow uploads additionally need Workflows write permission. Set an expiration. Organization approval may be required.</p>
+      <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">Create a fine-grained token on GitHub ↗</a>
+      <label class="field">Fine-grained token (stored only by this app, never returned)
+        <input id="github-token" type="password" autocomplete="off" spellcheck="false" placeholder="github_pat_…">
+      </label>
+      <button class="btn" data-action="connectToken">Connect with token</button>
+    </details>`}
+    ${state.error ? `<p class="warning-text">${esc(state.error)}</p>` : ""}
+    <p class="meta">Changing app limits or logging out does not revoke GitHub grants. Revoke or narrow them in GitHub Settings → Applications / Developer settings.</p>
+    <div class="row"><button class="btn ghost" data-action="closeAuthSetup">Cancel</button></div>
+  </div></div>`;
 }
 
 function renderDevicePopup() {
@@ -936,7 +1070,7 @@ function renderDevicePopup() {
 function renderAppUpdates() {
   const up = state.updates || {};
   const current = up.current_version || state.status?.version || "unknown";
-  const canUpdate = Boolean(up.update_available && up.source === "supervisor");
+  const canUpdate = Boolean(up.update_available && up.source === "supervisor" && !up.error);
   const sourceLabel =
     up.source === "supervisor"
       ? "Home Assistant App store"
@@ -949,6 +1083,7 @@ function renderAppUpdates() {
       Current: <strong>v${esc(current)}</strong>${up.latest_version ? ` · Latest: <strong>v${esc(up.latest_version)}</strong>` : ""}<br>
       Source: ${esc(sourceLabel)}${up.checked_at ? ` · Checked ${esc(relTime(up.checked_at))}` : ""}
       ${up.error ? `<br><span style="color:var(--err)">${esc(up.error)}</span>` : ""}
+      ${up.warning ? `<br>Fallback used: ${esc(up.warning)}` : ""}
     </div>
     ${
       up.update_available
@@ -959,7 +1094,7 @@ function renderAppUpdates() {
       <p class="meta" style="margin-top:10px">In-app updates need the Home Assistant Supervisor (App store). Update this app from its install source instead.</p>`
         : `<div class="row"><button class="btn ghost" data-action="checkUpdates">Check for app updates</button></div>
       <p class="meta" style="margin-top:10px">${
-        up.latest_version
+        up.error ? "Could not verify updates. Try again or check the App store." : up.latest_version
           ? `You have the latest version (v${esc(current)}).`
           : "Checks run every 30 minutes in the background. The button performs an immediate check."
       }</p>`
@@ -1001,6 +1136,7 @@ function render() {
           ? `<div class="busy updating"><div><div class="spinner"></div><p class="meta" style="text-align:center;margin-top:12px">Updating GitHub Sync…<br>The app restarts with the new version automatically.<br>If this stalls, close and reopen the panel.</p></div></div>`
           : ""
       }
+      ${renderAuthSetup()}
       ${renderDevicePopup()}
       ${
         s.confirm
@@ -1009,6 +1145,7 @@ function render() {
               <p class="meta">${esc(s.confirm.body)}</p>
               ${s.confirm.next?.type === "download" ? `<label class="confirm-option"><input type="checkbox" data-confirm-field="delete_extras" ${s.confirm.delete_extras ? "checked" : ""}> Delete local files that are not present in GitHub</label><p class="warning-text">This cannot be undone from the app. Ignored files are always protected.</p>` : ""}
               <div class="row">
+                ${["upload", "download"].includes(s.confirm.next?.type) ? `<button class="btn ghost" data-action="dryRun">Preview (dry run)</button>` : ""}
                 <button class="btn ${s.confirm.danger ? "danger" : "ok"}" data-action="confirmOk">${esc(s.confirm.ok || "Confirm")}</button>
                 <button class="btn ghost" data-action="confirmCancel">Cancel</button>
               </div>
@@ -1031,6 +1168,7 @@ document.addEventListener("click", (ev) => {
 });
 
 document.addEventListener("input", (ev) => {
+  if (ev.target.dataset.authField && state.authSetup) state.authSetup[ev.target.dataset.authField] = ev.target.value;
   const field = ev.target.dataset.field;
   if (field && state.editor) state.editor[field] = ev.target.value;
   if (ev.target.dataset.fieldGlobal) state[ev.target.dataset.fieldGlobal] = ev.target.value;
@@ -1041,6 +1179,7 @@ document.addEventListener("input", (ev) => {
 });
 
 document.addEventListener("change", (ev) => {
+  if (ev.target.dataset.authField && state.authSetup) state.authSetup[ev.target.dataset.authField] = ev.target.value;
   if (ev.target.dataset.field && state.editor) {
     state.editor[ev.target.dataset.field] = ev.target.value;
   }

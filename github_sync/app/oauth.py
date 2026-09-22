@@ -1,6 +1,6 @@
 """GitHub OAuth device flow for the Home Assistant App.
 
-Device authorization is the only sign-in method: the app shows a short
+For device authorization: the app shows a short
 user code, the user approves it on github.com, and the app polls until
 GitHub returns an access token. No OAuth App registration, no callback
 URL, no client secret, no token to paste.
@@ -20,12 +20,14 @@ from dataclasses import dataclass
 from typing import Any
 
 from aiohttp import ClientSession, ClientTimeout
+from access import validate_access
 
 
 GITHUB_OAUTH_BASE = "https://github.com"
 GITHUB_API_BASE = "https://api.github.com"
 DEVICE_GRANT = "urn:ietf:params:oauth:grant-type:device_code"
 DEVICE_SCOPE = "repo"
+DEVICE_SCOPES = {"public_read": "", "public_write": "public_repo", "repo": "repo"}
 
 #: Public OAuth client ID of the GitHub CLI, used as the built-in
 #: device-flow client so users can connect with one click.
@@ -69,6 +71,8 @@ class DeviceFlow:
     device_code: str
     interval: int
     expires_at: float
+    access: dict[str, Any] | None = None
+    scope: str = "repo"
     last_poll: float = 0.0
 
 
@@ -84,13 +88,17 @@ class OAuthBroker:
             key: flow for key, flow in self.device_flows.items() if flow.expires_at > now
         }
 
-    async def start_device(self, session: ClientSession) -> dict[str, Any]:
+    async def start_device(self, session: ClientSession, *, scope: str = "repo", access: dict[str, Any] | None = None) -> dict[str, Any]:
         """Begin a device authorization and return the code + GitHub link."""
+        if scope not in DEVICE_SCOPES:
+            raise OAuthError("Unknown GitHub permission scope")
+        if access is not None:
+            access = validate_access(access)
         self._cleanup()
         data = await _post_form(
             session,
             f"{GITHUB_OAUTH_BASE}/login/device/code",
-            {"client_id": GITHUB_CLI_CLIENT_ID, "scope": DEVICE_SCOPE},
+            {"client_id": GITHUB_CLI_CLIENT_ID, "scope": DEVICE_SCOPES[scope]},
         )
         if data.get("error"):
             raise OAuthError(data.get("error_description") or data["error"])
@@ -106,6 +114,8 @@ class OAuthBroker:
             device_code=device_code,
             interval=interval,
             expires_at=time.time() + expires_in,
+            access=access,
+            scope=scope,
         )
         verification_uri = data.get("verification_uri") or data.get("verification_url")
         return {
@@ -151,7 +161,7 @@ class OAuthBroker:
         if not token:
             raise OAuthError("GitHub did not return an access token")
         self.device_flows.pop(flow_id, None)
-        return {"status": "authorized", "access_token": token}
+        return {"status": "authorized", "access_token": token, "access": flow.access, "scope": flow.scope}
 
     def cancel_device(self, flow_id: str) -> None:
         self.device_flows.pop(flow_id, None)

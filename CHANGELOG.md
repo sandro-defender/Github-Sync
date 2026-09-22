@@ -23,6 +23,27 @@ All notable changes to GitHub Sync are documented here.
 
 ## [Unreleased]
 
+### Dry-run previews and safety (current session)
+
+- Complete the roadmap dry-run item: Upload/Download confirmation offers **Preview (dry run)**. Direction-specific plans list creates, overwrites and deletions, including upload subtree replacement and optional download cleanup. Execution always requires a separate confirmation.
+- `POST api/upload` / `api/download` accept strict boolean `dry_run`; preview performs no GitHub mutations, local writes/deletes, metadata saves or HA notifications, including error paths. Read-only connections can preview uploads without gaining write access.
+- Reject incomplete folder scans/GitHub trees and unsafe local symlinks or remote traversal paths. Keep preview and execution path checks consistent.
+- Add nine Python dry-run regressions (filesystem/data snapshots, remote mutation guards, preview/execution parity, empty repos, ignore/cleanup and failure paths) and five dependency-free frontend request/render tests in CI. Raise the busy overlay above dialogs to prevent duplicate submissions.
+
+### GitHub access controls (current session)
+
+- Choose read-only vs read/write operations and an explicit repository allowlist before authorizing. Select device OAuth scope (`public_read`, `public_write`, `repo`); the flow keeps its policy server-side so polling cannot widen it.
+- Add an optional fine-grained token connection for **GitHub-enforced** selected-repository/Contents permissions. Clearly explain that device OAuth scopes are broader and app limits do not restrict the grant itself.
+- Enforce policies server-side for manual and scheduled sync, repository/branch browsing, mapping creation and Git Data writes; reject unsafe API paths and cross-host credential forwarding. Empty allowlists deny all repositories; legacy connections keep existing access until configured.
+- Persist non-secret policy metadata, allow changing limits in Settings, reset policy on logout and clear account-specific UI caches. Tokens are never echoed by the API or kept in frontend state.
+- Add authorization/API regression coverage and a Python test CI job alongside App metadata linting.
+
+### Fixed (current session)
+
+- Correct the Supervisor self-info URL (remove `/api`), unwrap the real `result`/`data` response, and accept repository-prefixed app slugs. No elevated Supervisor API permission is needed.
+- Clear stale update errors after recovery, distinguish successful GitHub fallbacks from failures, suppress install controls for unconfirmed releases, and immediately surface rejected install requests.
+- Test real Supervisor envelopes, malformed payloads, fallback and recovery. Release-version assertions no longer depend on an outdated installed version.
+
 ### Added
 
 - **Device-code popup.** **Authorise with device code** (Settings, header, empty Mappings page) opens a popup with the short code — auto-copied to the clipboard, click to copy again — plus an **Open GitHub** approval link, live approval polling, and expiry countdown. It closes by itself once approved.
@@ -32,11 +53,11 @@ All notable changes to GitHub Sync are documented here.
 
 ### Changed
 
-- Device authorization is now the only sign-in method — no configuration options, no scope picker. `POST api/oauth/device/start` needs no setup; legacy `oauth` config in `/data` is dropped on load.
+- Previous release: device authorization became the only sign-in method — superseded by the access controls above. `POST api/oauth/device/start` needs no setup; legacy `oauth` config in `/data` is dropped on load.
 
 ### Removed
 
-- Personal access token entry (`POST api/token`), custom OAuth App settings (`POST api/oauth/config`), browser OAuth flow (`POST api/oauth/web/start`, `GET api/oauth/callback`), scope picker, and GitHub Enterprise API URL support.
+- Previous release: personal access token entry (`POST api/token`, now restored for fine-grained tokens only), custom OAuth App settings (`POST api/oauth/config`), browser OAuth flow (`POST api/oauth/web/start`, `GET api/oauth/callback`), scope picker, and GitHub Enterprise API URL support.
 
 ### Fixed
 

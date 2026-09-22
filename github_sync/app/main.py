@@ -13,6 +13,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from access import AccessDenied, require_access, validate_access
 from github_client import GithubAPIError, GithubAuthError, GithubClient
 from ha import notify_ha
 from ignore import IgnoreMatcher
@@ -89,7 +90,7 @@ def client_or_401() -> GithubClient:
     if not token:
         raise HTTPException(status_code=401, detail="Connect GitHub first")
     api_base = store().data.get("api_base") or GITHUB_API_BASE
-    return GithubClient(app.state.session, token, api_base)
+    return GithubClient(app.state.session, token, api_base, store().data.get("access"))
 
 
 def engine() -> SyncEngine:
@@ -106,10 +107,10 @@ async def _notify_failure(mapping: dict[str, Any], err: Exception) -> None:
     )
 
 
-async def _save_validated_token(token: str) -> None:
+async def _save_validated_token(token: str, *, access: dict[str, Any], auth_method: str, requested_scope: str | None = None) -> None:
     github = GithubClient(app.state.session, token, GITHUB_API_BASE)
     user = await github.get_user()
-    await store().set_token(token, user.get("login"), user.get("id"))
+    await store().set_token(token, user.get("login"), user.get("id"), access=access, auth_method=auth_method, requested_scope=requested_scope)
 
 
 async def _execute(
@@ -119,7 +120,9 @@ async def _execute(
     source: str,
     message: str | None = None,
     delete_extras: bool = False,
+    dry_run: bool = False,
 ) -> dict[str, Any]:
+    require_access(store().data.get("access"), mapping["repository"], write=direction == "upload" and not dry_run)
     mapping_id = mapping["id"]
     progress().start(mapping_id, f"Starting {direction}…")
     try:
@@ -135,11 +138,15 @@ async def _execute(
                     notification_id=f"github_sync_check_{mapping_id}",
                 )
         elif direction == "upload":
-            result = await sync.upload(mapping, message)
+            result = await sync.upload(mapping, message, dry_run=dry_run)
         elif direction == "download":
-            result = await sync.download(mapping, delete_extras=delete_extras)
+            result = await sync.download(mapping, delete_extras=delete_extras, dry_run=dry_run)
         else:
             raise HTTPException(status_code=400, detail="Unknown direction")
+
+        if dry_run:
+            progress().finish(mapping_id)
+            return result
 
         # Cap the conflict-detection snapshot so /data stays small (roadmap).
         capped_shas, shas_truncated, shas_total = cap_file_shas(
@@ -165,10 +172,21 @@ async def _execute(
         return result
     except Exception as err:
         progress().finish(mapping_id, error=str(err))
-        mapping["last_error"] = str(err)
-        await store().save()
-        await _notify_failure(mapping, err)
+        if not dry_run:
+            mapping["last_error"] = str(err)
+            await store().save()
+            await _notify_failure(mapping, err)
         raise
+
+
+@app.exception_handler(AccessDenied)
+async def _access_error(_request: Request, exc: AccessDenied) -> JSONResponse:
+    return JSONResponse({"detail": str(exc)}, status_code=403)
+
+
+@app.exception_handler(ValueError)
+async def _value_error(_request: Request, exc: ValueError) -> JSONResponse:
+    return JSONResponse({"detail": str(exc)}, status_code=400)
 
 
 @app.exception_handler(GithubAuthError)
@@ -235,6 +253,25 @@ async def get_progress(mapping_id: str | None = None) -> dict[str, Any]:
     return progress().snapshot(mapping_id)
 
 
+@app.post("/api/token")
+async def connect_fine_grained_token(body: dict[str, Any]) -> dict[str, Any]:
+    """Optional GitHub-enforced repo/permission restrictions; never echo secrets."""
+    access = validate_access(body.get("access"))
+    token = body.get("token")
+    if not isinstance(token, str) or not token.strip().startswith("github_pat_"):
+        raise HTTPException(status_code=400, detail="Use a GitHub fine-grained personal access token")
+    await _save_validated_token(token.strip(), access=access, auth_method="fine_grained")
+    return store().public_status()
+
+
+@app.post("/api/access")
+async def save_access(body: dict[str, Any]) -> dict[str, Any]:
+    client_or_401()
+    store().data["access"] = validate_access(body)
+    await store().save()
+    return store().public_status()
+
+
 @app.delete("/api/token")
 async def clear_token() -> dict[str, bool]:
     """Sign out: forget the GitHub account (device flow re-authorizes)."""
@@ -243,10 +280,10 @@ async def clear_token() -> dict[str, bool]:
 
 
 @app.post("/api/oauth/device/start")
-async def start_device_oauth() -> dict[str, Any]:
-    """Start device authorization — the only sign-in method (no options)."""
+async def start_device_oauth(body: dict[str, Any]) -> dict[str, Any]:
+    """Freeze the selected access policy into this authorization flow."""
     try:
-        return await oauth().start_device(app.state.session)
+        return await oauth().start_device(app.state.session, scope=body.get("scope", "public_read"), access=validate_access(body.get("access")))
     except OAuthError as err:
         raise HTTPException(status_code=400, detail=str(err)) from err
 
@@ -259,7 +296,10 @@ async def poll_device_oauth(body: dict[str, Any]) -> dict[str, Any]:
     try:
         result = await oauth().poll_device(app.state.session, flow_id)
         if result.get("status") == "authorized":
-            await _save_validated_token(str(result.pop("access_token")))
+            await _save_validated_token(
+                str(result.pop("access_token")), access=result.pop("access"),
+                auth_method="device", requested_scope=result.pop("scope"),
+            )
             result["account"] = store().public_status()
         return result
     except OAuthError as err:
@@ -286,6 +326,7 @@ async def save_mapping(body: dict[str, Any]) -> dict[str, Any]:
     if not local_path:
         raise HTTPException(status_code=400, detail="Choose a folder to sync")
     split_repo(repository)
+    require_access(store().data.get("access"), repository, write=bool(body.get("auto_sync")) and body.get("auto_direction", "upload") == "upload")
     folder = resolve_under_roots(roots(), local_path)
     if not folder.is_dir():
         raise HTTPException(status_code=400, detail="Folder does not exist")
@@ -330,6 +371,7 @@ async def list_repos() -> dict[str, Any]:
 
 @app.get("/api/branches")
 async def list_branches(repository: str) -> dict[str, Any]:
+    require_access(store().data.get("access"), repository)
     owner, repo = split_repo(repository)
     return {"branches": await client_or_401().list_branches(owner, repo)}
 
@@ -347,10 +389,17 @@ async def check(body: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _bool_option(body: dict[str, Any], key: str) -> bool:
+    value = body.get(key, False)
+    if not isinstance(value, bool):
+        raise HTTPException(status_code=400, detail=f"{key} must be a JSON boolean")
+    return value
+
+
 @app.post("/api/upload")
 async def upload(body: dict[str, Any]) -> dict[str, Any]:
     mapping = store().get_mapping(body.get("mapping_id") or "")
-    result = await _execute(mapping, "upload", source="manual", message=body.get("message"))
+    result = await _execute(mapping, "upload", source="manual", message=body.get("message"), dry_run=_bool_option(body, "dry_run"))
     result.pop("file_shas", None)
     return result
 
@@ -362,7 +411,8 @@ async def download(body: dict[str, Any]) -> dict[str, Any]:
         mapping,
         "download",
         source="manual",
-        delete_extras=bool(body.get("delete_extras", False)),
+        delete_extras=_bool_option(body, "delete_extras"),
+        dry_run=_bool_option(body, "dry_run"),
     )
     result.pop("file_shas", None)
     return result
