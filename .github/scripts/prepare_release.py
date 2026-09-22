@@ -12,6 +12,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 CONFIG = ROOT / "github_sync" / "config.yaml"
 DOCKERFILE = ROOT / "github_sync" / "Dockerfile"
+VERSION_PY = ROOT / "github_sync" / "app" / "version.py"
 CHANGELOG = ROOT / "CHANGELOG.md"
 
 
@@ -84,6 +85,17 @@ def write_version(new: str) -> None:
                 r'io\.hass\.version="[^"]+"',
                 f'io.hass.version="{new}"',
                 docker,
+                count=1,
+            ),
+            encoding="utf-8",
+        )
+    if VERSION_PY.exists():
+        version_py = VERSION_PY.read_text(encoding="utf-8")
+        VERSION_PY.write_text(
+            re.sub(
+                r'__version__\s*=\s*"[^"]+"',
+                f'__version__ = "{new}"',
+                version_py,
                 count=1,
             ),
             encoding="utf-8",

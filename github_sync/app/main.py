@@ -22,6 +22,7 @@ from progress import ProgressHub
 from scheduler import Scheduler
 from store import IGNORE_PRESETS, Store
 from sync import SyncEngine, split_repo
+from updater import UpdateChecker, UpdateError, update_app_via_core
 
 STATIC_DIR = Path(__file__).parent / "static"
 _LOGGER = logging.getLogger("github_sync")
@@ -45,15 +46,21 @@ async def lifespan(app: FastAPI):
 
     scheduler = Scheduler(store, session, progress, run_mapping)
     app.state.scheduler = scheduler
-    task = asyncio.create_task(scheduler.loop(), name="github-sync-scheduler")
+    updates = UpdateChecker(session, store)
+    app.state.updates = updates
+    tasks = [
+        asyncio.create_task(scheduler.loop(), name="github-sync-scheduler"),
+        asyncio.create_task(updates.loop(), name="github-sync-update-checker"),
+    ]
     try:
         yield
     finally:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        for task in tasks:
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
         await session.close()
 
 
@@ -205,6 +212,32 @@ async def status() -> dict[str, Any]:
     payload["roots"] = list(roots().keys())
     payload["supervisor"] = bool(__import__("os").environ.get("SUPERVISOR_TOKEN"))
     return payload
+
+
+@app.get("/api/updates")
+async def updates() -> dict[str, Any]:
+    """Update status (cached; the background checker refreshes every 30 min)."""
+    return await app.state.updates.check()
+
+
+@app.post("/api/updates/check")
+async def check_updates() -> dict[str, Any]:
+    """Force an immediate update check."""
+    return await app.state.updates.check(force=True)
+
+
+@app.post("/api/updates/install")
+async def install_update() -> dict[str, Any]:
+    """Start the update now via Home Assistant's update entity for this app."""
+    return await update_app_via_core(
+        app.state.session,
+        expected_latest=app.state.updates.snapshot().get("latest_version"),
+    )
+
+
+@app.exception_handler(UpdateError)
+async def _update_error(_request: Request, exc: UpdateError) -> JSONResponse:
+    return JSONResponse({"detail": str(exc)}, status_code=409)
 
 
 @app.get("/api/progress")

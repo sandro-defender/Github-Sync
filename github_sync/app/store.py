@@ -9,6 +9,8 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from version import __version__
+
 DEFAULT_IGNORE_UPLOAD = """\
 # Home Assistant runtime and secrets
 .storage/
@@ -119,6 +121,7 @@ class Store:
         oauth = self.data.get("oauth") or {}
         return {
             "configured": bool(self.data.get("access_token")),
+            "version": __version__,
             "username": self.data.get("username"),
             "user_id": self.data.get("user_id"),
             "api_base": self.data.get("api_base") or "https://api.github.com",

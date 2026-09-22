@@ -91,6 +91,10 @@ button.btn:disabled { opacity: .55; cursor: default; }
   padding: 12px 16px; border-radius: 8px; margin-bottom: 16px;
 }
 .banner.error { border-left-color: var(--err); }
+.banner.update-banner {
+  border-left-color: var(--ok);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;
+}
 label.field { display: block; margin: 0 0 14px; font-size: 13px; color: var(--muted); }
 input[type=text], input[type=password], textarea, select {
   width: 100%; margin-top: 6px; padding: 10px 12px;

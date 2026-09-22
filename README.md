@@ -27,6 +27,7 @@ Requires **Home Assistant OS** or **Supervised**. Container and Core installs do
 - Admin-only sidebar via Ingress. The token never reaches the browser.
 - Optional **automatic sync** per mapping (every 15 minutes, hourly, 6 hours, or daily): upload, download, or check-only.
 - Home Assistant persistent notification when a sync fails (or when check-only finds differences).
+- **In-app update check** with one-click updates: the app checks for a new version of itself every 30 minutes (and on demand), shows a banner + "Update now" button, and Home Assistant persistent notification when one is available.
 - Check for updates can flag **conflicts** after you have synced at least once (local and remote both changed since last sync).
 - Branded App Store icon and repository banner, plus the same icon in the Ingress UI.
 
@@ -110,6 +111,18 @@ New mappings exclude runtime and secrets from **upload**:
 - **Upload with an empty repo path replaces the repository tree** with the folder contents. Keep a README in the repo by putting it in the local folder or setting **repo path** (for example `homeassistant/`) so the rest of the repo is preserved.
 - Download keeps extra local files by default. The confirmation dialog has an explicit **Delete local extras** checkbox; only enable it when the local folder should mirror the remote tree. Download-ignore rules still protect ignored files. The API also accepts `delete_extras`.
 - Access tokens and OAuth client secrets are stored in the app `/data` volume and are never returned by the API.
+
+## App updates
+
+GitHub Sync checks for a newer version of **itself** in the background (every 30 minutes, first check ~20 s after start) and on demand:
+
+- **Check now** — Settings → **App updates** (or the green banner button) forces an immediate check.
+- **Update now** — installs the new version immediately. The app finds its own Home Assistant update entity (hassio integration) and calls the `update/install` service; Home Assistant then redownloads the image through the App store and restarts the app. The sidebar briefly disconnects and comes back on its own, then shows the new version in the header.
+- When an update is available, the app also raises a Home Assistant persistent notification (once per version).
+
+Update sources: the Supervisor App store (`/addons/self/info` — the same data the App store UI uses), falling back to the public GitHub release of this repository when the app runs outside Home Assistant (local development).
+
+Note: the Supervisor intentionally forbids an app from updating *itself* directly (`App github_sync can't update itself!`), which is why the one-click update goes through Home Assistant's update entity. On very old Home Assistant versions without the update entity, the app tells you to update from **Settings → Apps** instead.
 
 ## App options
 

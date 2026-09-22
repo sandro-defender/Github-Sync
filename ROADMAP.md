@@ -19,9 +19,9 @@ Requires **Home Assistant OS** or **Supervised** (Apps are not available on Cont
 
 ## Handoff for the next agent (read this first)
 
-**Branch:** `arena/01a0c65d-github-sync` (do not switch branches).<br>
-**PR:** https://github.com/sandro-defender/Github-Sync/pull/2<br>
-**Version:** `0.2.0` in `github_sync/config.yaml`
+**Branch:** `arena/01a0c675-github-sync` (do not switch branches).<br>
+**PR:** https://github.com/sandro-defender/Github-Sync/pull/3<br>
+**Version:** `0.2.1` in `github_sync/config.yaml` (also `github_sync/app/version.py` and the Dockerfile label — the release script keeps all three in sync)
 
 **What works today**
 
@@ -34,7 +34,8 @@ Requires **Home Assistant OS** or **Supervised** (Apps are not available on Cont
 - Three-way **conflict** flag on Check after at least one successful upload/download (uses stored `file_shas` in `/data`, stripped from the public API).
 - Download confirmation can opt into deleting local extras; it is off by default and respects download-ignore rules.
 - Refreshed App Store icon and repository banner; the icon is also used in the Ingress header and browser tab.
-- Unit tests: `PYTHONPATH=github_sync/app python3 -m unittest discover -s tests -v` (needs `aiohttp` for `test_sync_hash`).
+- **In-app update check + one-click update**: background check every 30 min (Supervisor `/addons/self/info`, GitHub-release fallback), header version chip, Settings → App updates card, green banner with **Update now**, HA persistent notification once per new version. The update itself is triggered through Home Assistant's update entity (`update/install`) because the Supervisor forbids an app updating itself.
+- Unit tests: `PYTHONPATH=github_sync/app python3 -m unittest discover -s tests -v` (needs `aiohttp` for `test_sync_hash` and `test_updater`).
 
 **Do not**
 
@@ -43,7 +44,7 @@ Requires **Home Assistant OS** or **Supervised** (Apps are not available on Cont
 - Put the GitHub token in API responses or in `config.yaml` options.
 - Use a `git` CLI; keep the Git Data API.
 
-**Next work (Phase 9)**
+**Next work (Phase 10)**
 
 1. Dry-run mode that never writes.
 2. Publish multi-arch images and set `image:` in `config.yaml` so Supervisor does not local-build.
@@ -65,7 +66,7 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 
 ## Current status
 
-**Active phase:** 9 (polish)
+**Active phase:** 10 (self-update done; polish continues)
 
 | Phase | Name | Status |
 | --- | --- | --- |
@@ -79,6 +80,7 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 | 7 | Sidebar UI | Done |
 | 8 | Scheduling, HA notifications, progress, conflicts | Done |
 | 9 | Tests (started), store listing, multi-arch images | In progress |
+| 10 | App self-update (update check + one-click update) | Done |
 
 ---
 
@@ -162,6 +164,17 @@ Working directory: `github_sync/app`. Frontend fetch paths are relative (`api/st
 - [x] Download UI checkbox for `delete_extras` (off by default; ignored files remain protected)
 - [x] Refresh App Store and repository branding assets
 
+## Phase 10 — App self-update
+
+- [x] Runtime version in `github_sync/app/version.py` (kept in sync with `config.yaml` + Dockerfile label by `.github/scripts/prepare_release.py`)
+- [x] Background update check every 30 min (`updater.py`), first check ~20 s after start, cached + forceable
+- [x] Update sources: Supervisor `/addons/self/info` (App store truth) with public GitHub-release fallback for local dev
+- [x] `GET api/updates`, `POST api/updates/check`, `POST api/updates/install` endpoints
+- [x] One-click **Update now** through Home Assistant's update entity (`update/install` service) — the Supervisor forbids an app updating itself
+- [x] UI: header version chip, Settings → **App updates** card, green "update available" banner (dismissible per version), full-screen updating overlay with polling until the new version answers
+- [x] HA persistent notification when an update is available (once per version; marker persisted in `/data`)
+- [x] Unit tests: version parsing, both update sources, entity discovery, update trigger, checker cache + notification
+
 ---
 
 ## Architecture
@@ -184,6 +197,8 @@ github_sync/
     scheduler.py                30s tick, per-mapping interval
     progress.py
     ha.py                       Supervisor persistent_notification
+    updater.py                  app self-update check + update trigger
+    version.py                  runtime version (synced with config.yaml)
     static/                     sidebar UI (relative URLs), browser icon
 tests/                          unittest, PYTHONPATH=github_sync/app
 ```
@@ -193,6 +208,7 @@ tests/                          unittest, PYTHONPATH=github_sync/app
 - `access_token`, `api_base`, `username`, `user_id`
 - `oauth`: OAuth App client ID/secret, callback URL, and selected scope
 - `mappings[]`: folder, repo, ignore rules, auto_sync, last_sync (including private `file_shas`)
+- `update_check`: last update-check timestamp, latest version seen, and the version already notified about
 
 **Security**
 
