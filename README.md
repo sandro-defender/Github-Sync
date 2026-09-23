@@ -20,7 +20,7 @@ Requires **Home Assistant OS** or **Supervised**. Container and Core installs do
 - Search repositories the token can access, or type `owner/name`.
 - Separate **upload ignore** and **download ignore** lists (gitignore syntax).
 - Presets for Home Assistant secrets, databases, logs, Python, Node, and ESPHome.
-- Live preview of included vs skipped files, with working checkboxes to toggle them — tick/untick per upload or download side, or hit **Uncheck all** and tick just the files you want to sync (the app writes the matching gitignore rules, including `!` re-includes, for you).
+- Live preview of included vs skipped files, with working checkboxes to toggle them — tick/untick per upload or download side, or hit **Uncheck all** and tick just the files you want to sync (the app writes the matching gitignore rules, including `!` re-includes, for you). Files inside a subfolder collapse into one folder row (e.g. everything under `living/` shares a single `living` row, ticked as a group or shown as partially checked), unchecked rows keep readable text (no strikethrough), and **Uncheck all** stays disabled until every file is checked.
 - Check for updates: compare git blob hashes. Nothing is written.
 - Upload: commit the folder to the mapped branch (creates the first commit if empty).
 - Download: write remote files onto disk. Extra local files are kept unless you opt into deletion.
@@ -91,7 +91,7 @@ exposed to your network. Pages:
 1. **+ Add folder sync**
 2. **Folder** — browse mounts and select a directory (for example `homeassistant/esphome` or `share/backups`).
 3. **Repository** — pick from the list or type `owner/repo`, set the branch, optionally a path *inside* the repo if the folder should not replace the entire tree.
-4. **Ignore rules** — edit upload vs download gitignore. Use presets, or work from the live **What will be synced** preview: untick files to exclude them, tick ignored files to include them again, or press **Uncheck all** and tick only the files you want. The textarea always holds the resulting gitignore rules (ticking a file ignored by a broader pattern adds a `!` re-include line you can edit or delete by hand). Folders ignored by the catch-all `*` rule keep their files visible so every file stays selectable.
+4. **Ignore rules** — edit upload vs download gitignore. Use presets, or work from the live **What will be synced** preview: untick a file *or a folder* to exclude it, tick it again to include it (folder rows tick/untick every file inside; a folder with a mix of both shows as partially checked, and one tick completes it). Unchecked rows stay readable — no strikethrough. **Uncheck all** (top-right of the preview) is only enabled while every file is checked: it excludes everything in one click, then you tick back exactly the files or folders you want to sync. The textarea always holds the resulting gitignore rules (ticking a file ignored by a broader pattern adds a `!` re-include line you can edit or delete by hand). Folders ignored by the catch-all `*` rule keep their files visible so every file stays selectable; always-ignored folders (`.git`) are hidden from the list.
 5. **Review** — optional commit message template with `{name}`, `{folder}`, `{repository}`, `{timestamp}`. Enable **automatic sync** here if you want the app to run on an interval.
 6. **Save mapping**
 

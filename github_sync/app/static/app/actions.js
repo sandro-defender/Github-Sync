@@ -284,7 +284,7 @@ function includeChain(path) {
 }
 
 /**
- * Toggle one path in the active ignore rules (a checkbox in the sync preview).
+ * Pure rule-text transform for one path checkbox.
  *
  * `included` is the checkbox's new state:
  *  - unchecking excludes the path — usually by adding an exact rule; when the
@@ -296,48 +296,91 @@ function includeChain(path) {
  *    "Uncheck all") is what excludes it, by appending the negation chain so
  *    just this path is re-included.
  */
-export function toggleIgnoredPath(path, included) {
-  const draft = editor.value;
-  if (!draft || !path) return;
-  const field = ignoreField();
-  const current = draft[field] || "";
+function applyPathToggle(text, path, included) {
+  const current = text || "";
   const lines = current.split("\n").map((line) => line.trimEnd());
   const exact = exactRuleLines(path);
   const negations = exactNegationLines(path);
   if (included) {
     if (lines.some((line) => exact.includes(line))) {
-      patchEditor({ [field]: lines.filter((line) => !exact.includes(line)).join("\n") });
-    } else {
-      const chain = includeChain(path).filter((line) => !lines.includes(line));
-      if (chain.length) {
-        patchEditor({ [field]: `${current.replace(/\s*$/, "")}\n${chain.join("\n")}`.trim() + "\n" });
-      }
+      return lines.filter((line) => !exact.includes(line)).join("\n");
     }
-  } else if (lines.some((line) => negations.includes(line))) {
-    patchEditor({ [field]: lines.filter((line) => !negations.includes(line)).join("\n") });
-  } else if (!lines.some((line) => exact.includes(line))) {
-    patchEditor({ [field]: `${current.replace(/\s*$/, "")}\n${path}`.trim() + "\n" });
+    const chain = includeChain(path).filter((line) => !lines.includes(line));
+    if (chain.length) {
+      return `${current.replace(/\s*$/, "")}\n${chain.join("\n")}`.trim() + "\n";
+    }
+    return current;
   }
+  if (lines.some((line) => negations.includes(line))) {
+    return lines.filter((line) => !negations.includes(line)).join("\n");
+  }
+  if (!lines.some((line) => exact.includes(line))) {
+    return `${current.replace(/\s*$/, "")}\n${path}`.trim() + "\n";
+  }
+  return current;
+}
+
+/** Toggle one path in the active ignore rules (a checkbox in the sync preview). */
+export function toggleIgnoredPath(path, included) {
+  const draft = editor.value;
+  if (!draft || !path) return;
+  const field = ignoreField();
+  patchEditor({ [field]: applyPathToggle(draft[field] || "", path, included) });
   refreshIgnorePreview();
 }
 
 /**
- * "Uncheck all" — exclude everything on the active ignore side by appending a
- * single `*` rule. Ticking a checkbox afterwards re-includes just that file
- * via an automatic `!` negation chain (see `toggleIgnoredPath`). Existing
- * rules stay untouched; removing the `*` line by hand restores them.
+ * Toggle every file inside one folder at once (a folder row in the preview).
+ *
+ * Reuses the exact per-file rule semantics from `applyPathToggle`, so folder
+ * and file rows can never disagree, and refreshes the preview once for the
+ * whole batch. Checking a partial folder only ticks its excluded files;
+ * unchecking only unticks its included ones.
+ */
+export function toggleIgnoredFolder(path, included) {
+  const draft = editor.value;
+  const result = preview.value;
+  if (!draft || !path || !result) return;
+  const prefix = `${path}/`;
+  const files = (included ? result.excluded || [] : result.included || [])
+    .filter((item) => !item.is_dir && String(item.path).startsWith(prefix))
+    .map((item) => item.path);
+  if (!files.length) return;
+  const field = ignoreField();
+  let text = draft[field] || "";
+  for (const file of files) text = applyPathToggle(text, file, included);
+  patchEditor({ [field]: text });
+  refreshIgnorePreview();
+}
+
+/**
+ * "Uncheck all" — exclude everything on the active ignore side.
+ *
+ * Normally this appends a single `*` rule; ticking a checkbox afterwards
+ * re-includes just that file via an automatic `!` negation chain (see
+ * `applyPathToggle`). Existing rules stay untouched; removing the `*` line by
+ * hand restores them. When the catch-all is already present (everything was
+ * unchecked before and got ticked back in), the `!` re-include lines are
+ * dropped so the button does what it says even on the second round.
  */
 export function uncheckAllPaths() {
   const draft = editor.value;
   if (!draft) return;
   const field = ignoreField();
   const current = draft[field] || "";
-  const lines = current.split("\n").map((line) => line.trim());
-  if (lines.includes("*") || lines.includes("**")) {
-    pushToast("Everything is already unchecked — tick files to sync them again", "info");
-    return;
+  const rawLines = current.split("\n");
+  const lines = rawLines.map((line) => line.trim());
+  const hasCatchAll = lines.includes("*") || lines.includes("**");
+  if (hasCatchAll) {
+    const negationCount = lines.filter((line) => line.startsWith("!")).length;
+    if (!negationCount) {
+      pushToast("Everything is already unchecked — tick files to sync them again", "info");
+      return;
+    }
+    patchEditor({ [field]: rawLines.filter((line, index) => !lines[index].startsWith("!")).join("\n") });
+  } else {
+    patchEditor({ [field]: `${current.replace(/\s*$/, "")}\n*`.trim() + "\n" });
   }
-  patchEditor({ [field]: `${current.replace(/\s*$/, "")}\n*`.trim() + "\n" });
   pushToast("All files unchecked — tick the ones you want to sync", "success");
   refreshIgnorePreview();
 }

@@ -359,6 +359,7 @@ async def preview_ignore(body: dict[str, Any]) -> dict[str, Any]:
         "excluded": excluded[:300],
         "included_count": len(included),
         "excluded_count": len(excluded),
+        "excluded_file_count": sum(1 for item in excluded if not item.get("is_dir")),
         "included_size": sum(int(item.get("size") or 0) for item in included),
         "truncated": truncated,
     }
