@@ -133,6 +133,10 @@ class FakeElement extends FakeNode {
     this.attributes = {};
     this.value = "";
     this.checked = false;
+    // `indeterminate` is a plain property on a real input (never an
+    // attribute), so the fake has to own it or renderers take their
+    // setAttribute fallback and the stub silently disagrees with browsers.
+    this.indeterminate = false;
     this.disabled = false;
     this.dataset = {};
     this._raw = undefined;

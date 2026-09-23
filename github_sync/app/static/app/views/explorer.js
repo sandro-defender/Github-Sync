@@ -11,7 +11,7 @@
  * that gitignore applies to everything below it (see `applyFolderToggle` in
  * `actions.js`), so a folder that was never listed is still ticked completely.
  */
-import { html, useEffect, useRef } from "../deps.js";
+import { html } from "../deps.js";
 import {
   checkAllPaths,
   collapseAllFolders,
@@ -102,19 +102,22 @@ export function treeRows(levels, expanded) {
   return rows;
 }
 
-/** Checkbox that can also render the third (indeterminate) state. */
+/**
+ * Checkbox that can also render the third (indeterminate) state.
+ *
+ * `indeterminate` is a property rather than an attribute, and Preact assigns it
+ * in the same diff that sets `checked` — so the dash arrives with the row
+ * instead of one tick later. That lag was not cosmetic: a browser flickered a
+ * stale tick after every scan, and only an effect could read it back.
+ */
 function Tickbox({ state, label, onChange }) {
-  const ref = useRef(null);
-  useEffect(() => {
-    if (ref.current) ref.current.indeterminate = state === "partial";
-  }, [state]);
   return html`<input
     type="checkbox"
-    ref=${ref}
     class="tree-tick"
     aria-label=${label}
     title=${label}
     checked=${state === "checked"}
+    indeterminate=${state === "partial"}
     onChange=${(ev) => onChange?.(ev.target.checked)}
   />`;
 }

@@ -147,17 +147,28 @@ async function flush() {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-/** Wait for pending signal-driven re-renders *and* Preact effects. */
+/** Wait for pending signal-driven re-renders to reach the DOM. */
 const paint = flush;
 
+/** Let queued promises run without yielding to timers (a `setTimeout` cannot fire). */
+async function microtasks() {
+  for (let index = 0; index < 6; index += 1) await Promise.resolve();
+}
+
 /**
- * `paint()` plus a macrotask: Preact queues layout effects one tick after the
- * diff, and `Tickbox` sets `indeterminate` from an effect, so tests that read
- * that property have to yield once more.
+ * Poll `check()` until it passes or `limit` ms elapse.
+ *
+ * Anything that waits on a *real* timer (the explorer's debounce) has to be
+ * polled: a fixed sleep is both slow and flaky, because a loaded CI runner can
+ * stall a 240 ms timer for longer than the sleep allowed.
  */
-async function settle() {
-  await flush();
-  await new Promise((resolve) => setTimeout(resolve, 25));
+async function waitFor(check, limit = 3000) {
+  const deadline = Date.now() + limit;
+  for (;;) {
+    if (check()) return true;
+    if (Date.now() > deadline) return false;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
 }
 
 /* ------------------------------------------------------- file explorer fake */
@@ -600,8 +611,8 @@ test("file explorer folder rows tick whole folders, however big they are", async
   assert.match(row("big").textContent, /4000 files/, "counts come from the folder rollup, not from loaded rows");
   assert.match(row("big").textContent, /12 folders/, "…including nested folders");
   assert.equal(row("big").querySelector("input").checked, true, "a fully included folder renders checked");
-  await settle();
   assert.equal(row("mixed").querySelector("input").indeterminate, true, "a partly included folder is indeterminate");
+  assert.equal(row("big").querySelector("input").indeterminate, false, "…and a fully included row has the dash cleared");
   assert.ok(row("mixed").classList.contains("partial"), "…and is styled as such");
   assert.match(row("mixed").textContent, /3 of 5 files/, "…and says how far it is");
   assert.equal(row(".storage").querySelector("input").checked, false, "an ignored folder renders unchecked");
@@ -854,11 +865,15 @@ test("explorer filter searches the whole folder, not just what is open", async (
   const requests = server.requests().length;
   const textarea = [...root.querySelectorAll("textarea")].at(-1);
   textarea.value = "*.yaml\n*.db\n";
+  const typedAt = Date.now();
   textarea.dispatchEvent({ type: "input" });
-  await paint();
+  await microtasks();
   assert.equal(server.requests().length, requests, "the keystroke itself sends nothing");
-  await new Promise((resolve) => setTimeout(resolve, 450));
-  assert.ok(server.requests().length > requests, "a moment later the explorer refreshed");
+  assert.ok(
+    await waitFor(() => server.requests().length > requests),
+    "the explorer refreshes once the keystrokes stop"
+  );
+  assert.ok(Date.now() - typedAt >= 180, "…but not before the debounce window has passed");
 
   // Clearing the filter goes back to the tree.
   modules.state.treeQuery.value = "";
