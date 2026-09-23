@@ -8,7 +8,8 @@ interval. The whole workflow lives in the Home Assistant sidebar.
 - **Check / Upload / Download** — Git-blob comparison, conflict flags, and a
   read-only **Preview (dry run)** before anything is written.
 - **Smart gitignore editor** — presets for HA secrets, databases, logs, ESPHome,
-  Python and Node, with a live include/ignore preview.
+  Python and Node, plus a **file explorer**: the mapped folder as a tree where every
+  file *and* every folder can be ticked, and the matching rules are written for you.
 - **Auto-sync** — per mapping: every 15 minutes, hourly, 6 hours or daily;
   upload, download or check-only. Failures raise a Home Assistant notification.
 - **Optional protections** — read-only mode, `owner/repo` allowlists, or a

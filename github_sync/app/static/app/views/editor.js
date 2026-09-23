@@ -1,5 +1,5 @@
 /** Mapping wizard: folder → repository → ignore rules → review. */
-import { html, useEffect, useRef } from "../deps.js";
+import { html } from "../deps.js";
 import {
   applyPreset,
   browse,
@@ -9,16 +9,15 @@ import {
   patchEditor,
   pickFolder,
   pickRepo,
-  refreshIgnorePreview,
+  refreshExplorer,
   saveMapping,
+  scheduleExplorerRefresh,
   setIgnoreSide,
-  toggleIgnoredFolder,
-  toggleIgnoredPath,
-  uncheckAllPaths,
 } from "../actions.js";
-import { bytes, count, directionLabel, intervalLabel, matchesQuery } from "../format.js";
-import { branches, browser, editor, ignoreSide, preview, presets, repoQuery, repos } from "../state.js";
+import { directionLabel, intervalLabel, matchesQuery } from "../format.js";
+import { branches, browser, editor, ignoreSide, presets, repoQuery, repos, tree } from "../state.js";
 import { Badge, Banner, Button, Card, Field, Icon, Spinner, Switch } from "../ui.js";
+import { FileExplorer } from "./explorer.js";
 
 const STEPS = [
   { n: 1, label: "Folder" },
@@ -186,92 +185,11 @@ export function RepoStep({ draft }) {
   </div>`;
 }
 
-/**
- * Collapse the preview into display rows.
- *
- * Files at the mapping root stay individual rows; everything inside a
- * top-level folder folds into a single folder row. A folder row is checked
- * when every file in the folder is included, unchecked when none are, and
- * indeterminate when only some are. Excluded folders the walk pruned (no
- * file rows underneath) get their own unchecked row; always-ignored folders
- * (`.git`) stay hidden because ticking them can never work.
- */
-function previewRows(result) {
-  const includedFiles = (result.included || []).filter((item) => !item.is_dir);
-  const excludedFiles = (result.excluded || []).filter((item) => !item.is_dir);
-  const folderParts = new Map();
-  const loose = { included: [], excluded: [] };
-  const bucketFor = (item) => {
-    const path = String(item.path);
-    const name = path.split("/")[0];
-    if (!path.includes("/")) return loose;
-    if (!folderParts.has(name)) folderParts.set(name, { included: [], excluded: [] });
-    return folderParts.get(name);
-  };
-  for (const item of includedFiles) bucketFor(item).included.push(item);
-  for (const item of excludedFiles) bucketFor(item).excluded.push(item);
-
-  const rows = [];
-  for (const [name, parts] of folderParts) {
-    const total = parts.included.length + parts.excluded.length;
-    const state =
-      parts.excluded.length === 0 ? "checked" : parts.included.length === 0 ? "unchecked" : "partial";
-    const size = parts.included.reduce((sum, file) => sum + (Number(file.size) || 0), 0);
-    rows.push({
-      kind: "folder",
-      path: name,
-      state,
-      size,
-      meta: state === "partial" ? `${parts.included.length} of ${count(total, "file")}` : count(total, "file"),
-      key: `folder:${name}`,
-    });
-  }
-  for (const item of loose.included) {
-    rows.push({ kind: "file", path: item.path, state: "checked", size: Number(item.size) || 0, key: `file:${item.path}` });
-  }
-  for (const item of loose.excluded) {
-    rows.push({ kind: "file", path: item.path, state: "unchecked", pattern: item.pattern, key: `file:${item.path}` });
-  }
-
-  let prunedDirs = 0;
-  for (const item of result.excluded || []) {
-    if (!item.is_dir || item.always_ignored) continue;
-    if (folderParts.has(item.path)) continue; // files underneath already make a row
-    prunedDirs += 1;
-    rows.push({ kind: "folder", path: item.path, state: "unchecked", pruned: true, pattern: item.pattern, key: `folder:${item.path}` });
-  }
-
-  rows.sort((a, b) => a.path.localeCompare(b.path, undefined, { sensitivity: "base" }));
-  return { rows, includedFiles: includedFiles.length, excludedFiles: excludedFiles.length, prunedDirs };
-}
-
-/** Tri-state checkbox for a folder row (checked / unchecked / partial). */
-function FolderCheckbox({ state, onChange }) {
-  const inputRef = useRef(null);
-  useEffect(() => {
-    if (inputRef.current) inputRef.current.indeterminate = state === "partial";
-  }, [state]);
-  return html`<input
-    type="checkbox"
-    ref=${inputRef}
-    checked=${state === "checked"}
-    onChange=${(ev) => onChange?.(ev.target.checked)}
-  />`;
-}
-
-/** Step 3 — ignore rules with live include/exclude preview. */
+/** Step 3 — ignore rules, edited with the live file explorer next to them. */
 export function IgnoreStep({ draft }) {
   const side = ignoreSide.value;
   const field = side === "download" ? "ignore_download" : "ignore_upload";
-  const result = preview.value;
   const presetList = Object.entries(presets.value || {});
-  const grouped = result ? previewRows(result) : null;
-  const allChecked =
-    Boolean(grouped) && grouped.rows.length > 0 && grouped.rows.every((row) => row.state === "checked");
-  const moreIncluded = grouped ? Math.max(0, (result.included_count || 0) - grouped.includedFiles) : 0;
-  const moreExcluded = grouped
-    ? Math.max(0, (result.excluded_file_count ?? result.excluded_count ?? 0) - grouped.excludedFiles - grouped.prunedDirs)
-    : 0;
   return html`<div class="stack">
     <${Card}
       title="Ignore rules"
@@ -295,84 +213,32 @@ export function IgnoreStep({ draft }) {
           </button>`
         )}
       </div>
-      <${Field} label=${side === "download" ? "Download ignore patterns" : "Upload ignore patterns"}>
+      <${Field}
+        label=${side === "download" ? "Download ignore patterns" : "Upload ignore patterns"}
+        hint="The explorer writes its own lines at the end of this list, after its marker comment — delete that block to start over."
+      >
         <textarea
           class="mono"
           spellcheck="false"
           value=${draft[field] || ""}
-          onInput=${(ev) => patchEditor({ [field]: ev.target.value })}
-          onBlur=${() => refreshIgnorePreview()}
+          onInput=${(ev) => {
+            patchEditor({ [field]: ev.target.value });
+            scheduleExplorerRefresh();
+          }}
+          onBlur=${() => refreshExplorer()}
         />
       </${Field}>
       <div class="row">
-        <${Button} variant="ghost" icon="refresh" onClick=${() => refreshIgnorePreview()}>Refresh preview</${Button}>
-        ${result?.truncated ? html`<${Badge} tone="warning" icon="warning">preview truncated</${Badge}>` : null}
+        <${Button} variant="ghost" icon="refresh" onClick=${() => refreshExplorer()}>Re-scan folder</${Button}>
+        ${tree.value?.truncated ? html`<${Badge} tone="warning" icon="warning">scan limit</${Badge}>` : null}
       </div>
     </${Card}>
 
-    <${Card}
-      title="What will be synced"
-      icon="eye"
-      actions=${result
-        ? html`<${Button}
-            variant="ghost"
-            size="sm"
-            icon="close"
-            title=${allChecked
-              ? "Ignore everything on this side, then tick only the files you want to sync"
-              : "Enabled only when every file is checked"}
-            disabled=${!allChecked}
-            onClick=${uncheckAllPaths}
-          >Uncheck all</${Button}>`
-        : null}
-    >
-      ${result
-        ? html`<div class="stats">
-              <div class="stat"><b>${result.included_count}</b><span>included (${bytes(result.included_size)})</span></div>
-              <div class="stat"><b>${result.excluded_count}</b><span>ignored</span></div>
-            </div>
-            <div class="list tall">
-              ${grouped.rows.map(
-                (row) =>
-                  row.kind === "folder"
-                    ? html`<label
-                        class=${`list-row check folder ${row.state}${row.state === "unchecked" ? " excluded" : ""}`.trim()}
-                        key=${row.key}
-                        title=${row.pruned
-                          ? `“${row.path}” is excluded by rule “${row.pattern || "a rule"}” — tick it to include the folder`
-                          : "Toggle every file in this folder"}
-                      >
-                        <${FolderCheckbox} state=${row.state} onChange=${(next) => toggleIgnoredFolder(row.path, next)} />
-                        <${Icon} name="folder" size=${15} />
-                        <span class="grow mono">${row.path}</span>
-                        <span class="meta">${row.pruned
-                          ? row.pattern || "ignored"
-                          : `${row.meta}${row.size ? ` · ${bytes(row.size)}` : ""}`}</span>
-                      </label>`
-                    : html`<label
-                        class=${`list-row check ${row.state === "checked" ? "" : "excluded"}`.trim()}
-                        key=${row.key}
-                      >
-                        <input
-                          type="checkbox"
-                          checked=${row.state === "checked"}
-                          onChange=${(ev) => toggleIgnoredPath(row.path, ev.target.checked)}
-                        />
-                        <${Icon} name="file" size=${15} />
-                        <span class="grow mono">${row.path}</span>
-                        <span class="meta">${row.state === "checked" ? bytes(row.size) : row.pattern || "ignored"}</span>
-                      </label>`
-              )}
-              ${moreIncluded
-                ? html`<div class="list-row muted">… and ${moreIncluded} more included files</div>`
-                : null}
-              ${moreExcluded
-                ? html`<div class="list-row muted">… and ${moreExcluded} more ignored files</div>`
-                : null}
-            </div>
-            <p class="meta">Untick a folder or file to ignore it; tick it to include it again. The rules above update for you.</p>`
-        : html`<p class="meta">Choose a folder in step 1 to see which files are included and ignored.</p>`}
-    </${Card}>
+    ${draft.local_path
+      ? html`<${FileExplorer} />`
+      : html`<${Card} title="File explorer" icon="folder">
+          <p class="meta">Choose a folder in step 1 and the explorer lists it here, with a checkbox on every file and folder.</p>
+        </${Card}>`}
   </div>`;
 }
 

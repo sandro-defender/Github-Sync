@@ -24,12 +24,14 @@ import {
   ignoreSide,
   loading,
   mappings,
-  preview,
   presets,
   pushToast,
   repos,
   resetAccountState,
   status,
+  tree,
+  treeExpanded,
+  treeQuery,
   updating,
   updates,
   userMenuOpen,
@@ -138,11 +140,18 @@ export function patchEditor(patch) {
   editor.value = { ...(editor.value || blankEditor()), ...patch };
 }
 
+/** Reset the file explorer (folder or rules changed, nothing is loaded). */
+export function resetExplorer() {
+  tree.value = null;
+  treeExpanded.value = [];
+  treeQuery.value = "";
+}
+
 /** Open the wizard for a new mapping. */
 export function startNewMapping() {
   editor.value = blankEditor();
   browser.value = null;
-  preview.value = null;
+  resetExplorer();
   view.value = "editor";
 }
 
@@ -150,7 +159,7 @@ export function startNewMapping() {
 export function editMapping(mapping) {
   editor.value = blankEditor(mapping);
   browser.value = null;
-  preview.value = null;
+  resetExplorer();
   view.value = "editor";
 }
 
@@ -159,6 +168,7 @@ export function closeEditor() {
   editor.value = null;
   browser.value = null;
   diff.value = null;
+  resetExplorer();
   view.value = "list";
 }
 
@@ -166,7 +176,7 @@ export function closeEditor() {
 export function gotoStep(step) {
   patchEditor({ step });
   if (step === 2) loadRepos();
-  if (step === 3) refreshIgnorePreview();
+  if (step === 3) refreshExplorer();
 }
 
 /** Browse a folder inside the mounted Home Assistant roots. */
@@ -183,6 +193,8 @@ export function pickFolder(path) {
   const target = path === undefined ? browser.value?.path || "" : path;
   patchEditor({ local_path: target, name: (editor.value?.name || target || "").trim() });
   browser.value = null;
+  // The explorer shows the *mapped* folder, so a new folder means a new tree.
+  resetExplorer();
 }
 
 /** Load the repository list (once per account). */
@@ -211,8 +223,9 @@ export async function pickRepo(fullName, defaultBranch) {
 export function setIgnoreSide(side) {
   if (ignoreSide.value === side) return;
   ignoreSide.value = side;
-  preview.value = null;
-  refreshIgnorePreview();
+  // Which folders are open stays the same, but everything else is side-specific.
+  tree.value = null;
+  refreshExplorer();
 }
 
 /** Current ignore field name for the active side. */
@@ -229,40 +242,97 @@ export function applyPreset(key) {
   const current = draft[field] || "";
   if (current.includes(preset.patterns.trim())) return;
   patchEditor({ [field]: `${current.trim()}\n# ${preset.label}\n${preset.patterns}`.trim() + "\n" });
-  refreshIgnorePreview();
+  refreshExplorer();
 }
 
-/** Live count of included/ignored files for the active ignore side. */
-export async function refreshIgnorePreview() {
-  const draft = editor.value;
-  if (!draft?.local_path) return;
-  const side = ignoreSide.value;
-  try {
-    preview.value = await api("api/preview_ignore", {
-      method: "POST",
-      body: {
-        local_path: draft.local_path,
-        ignore: draft[ignoreField(side)] || "",
-        direction: side,
-      },
-    });
-  } catch (err) {
-    preview.value = null;
-    error.value = err.message || String(err);
+/**
+ * Comment that opens the block of rules the file explorer owns.
+ *
+ * Everything above it is the user's own gitignore text and is never rewritten:
+ * the checkboxes only edit the lines below the marker. gitignore lets the *last*
+ * matching rule win, so a tick here always beats a rule above it, deleting the
+ * block (or pressing **Reset selection**) restores exactly what the user wrote,
+ * and no tick can lose a hand-written rule.
+ */
+const EXPLORER_BLOCK = "# GitHub Sync selection — the file explorer edits the lines below";
+
+/** `*` and `!**` are the two catch-alls the explorer writes for a whole side. */
+const EXCLUDE_ALL = "*";
+const REINCLUDE_ALL = "!**";
+
+/** A line with a glob metacharacter is a human pattern, never ours to rewrite. */
+const GLOB_CHARS = /[*?[\]]/;
+
+/** Folder levels "Expand all" opens below what is already on screen. */
+export const EXPAND_ALL_DEPTH = 3;
+
+/** Debounce for rule typing / the explorer's filter box (ms). */
+const EXPLORER_DEBOUNCE = 240;
+
+/** Entries one folder level shows per page (mirrors `paths.TREE_PAGE_SIZE`). */
+const EXPLORER_PAGE_SIZE = 200;
+
+let explorerTimer = null;
+let explorerSeq = 0;
+
+/**
+ * Drop a scheduled re-scan.
+ *
+ * A pending debounce belongs to the keystroke (or the draft) that queued it:
+ * when another mapping takes over the editor, scanning the folder that was
+ * open a moment ago would drop the wrong tree into the new draft.
+ */
+function cancelScheduledExplorerRefresh() {
+  if (explorerTimer) {
+    clearTimeout(explorerTimer);
+    explorerTimer = null;
   }
 }
 
 /**
- * All ignore lines that name a path exactly (anchored or not, folder or not).
- * Used to recognise and remove hand-written or previously added exact rules.
+ * Read a rule line the way the explorer does.
+ *
+ * Returns `{negated, path}` for a plain path rule (`esphome/a.yaml`, `/logs/`,
+ * `!/logs/**` — the shapes the explorer writes) and `null` for comments, blank
+ * lines and anything with a glob, which the explorer never touches.
  */
-function exactRuleLines(path) {
-  return [path, `${path}/`, `/${path}`, `/${path}/`];
+function parseRule(line) {
+  let text = String(line || "").trim();
+  if (!text || text.startsWith("#")) return null;
+  const negated = text.startsWith("!");
+  if (negated) text = text.slice(1);
+  if (text.endsWith("/**")) text = text.slice(0, -3);
+  else if (text.endsWith("/")) text = text.slice(0, -1);
+  text = text.replace(/^\/+/, "");
+  if (!text || GLOB_CHARS.test(text)) return null;
+  return { negated, path: text };
 }
 
-/** All ignore lines that re-include (`!`) a path exactly. */
-function exactNegationLines(path) {
-  return [`!${path}`, `!/${path}`, `!${path}/`, `!/${path}/`];
+/** Split the ignore text into the user's own rules and the explorer's block. */
+function splitRules(text) {
+  const lines = String(text || "").split("\n");
+  const at = lines.findIndex((line) => line.trim() === EXPLORER_BLOCK);
+  if (at === -1) return { own: lines, block: [] };
+  const block = lines
+    .slice(at + 1)
+    .map((line) => line.trim())
+    .filter((line) => line && line !== EXPLORER_BLOCK);
+  return { own: lines.slice(0, at), block };
+}
+
+/** Rebuild ignore text from `{own, block}` (the marker only exists if needed). */
+function joinRules(own, block) {
+  const head = (own || []).join("\n").replace(/\s+$/, "");
+  const lines = (block || []).map((line) => String(line).trim()).filter(Boolean);
+  if (!lines.length) return head ? `${head}\n` : "";
+  return `${head ? `${head}\n` : ""}${EXPLORER_BLOCK}\n${lines.join("\n")}\n`;
+}
+
+/** `true` when a rule line names `path` itself, or anything below it. */
+function namesPath(line, path, { inside = false } = {}) {
+  const rule = parseRule(line);
+  if (!rule) return false;
+  return inside ? rule.path === path || rule.path.startsWith(`${path}/`) : rule.path === path;
 }
 
 /**
@@ -270,119 +340,320 @@ function exactNegationLines(path) {
  *
  * Gitignore cannot re-include a file while one of its parent folders stays
  * ignored, so the chain negates every ancestor first (`!/a/`, `!/a/b/`) and
- * ends with the file itself (`!/a/b/c.yaml`). Anchored with a leading `/` so
+ * ends with the path itself (`!/a/b/c.yaml`). Anchored with a leading `/` so
  * only this one path is affected.
  */
 function includeChain(path) {
   const parts = String(path).split("/").filter(Boolean);
   const chain = [];
-  for (let index = 1; index < parts.length; index += 1) {
-    chain.push(`!/${parts.slice(0, index).join("/")}/`);
+  for (let index = 1; index <= parts.length; index += 1) {
+    const partial = parts.slice(0, index).join("/");
+    chain.push(index === parts.length ? `!/${partial}` : `!/${partial}/`);
   }
-  if (parts.length) chain.push(`!/${parts.join("/")}`);
   return chain;
 }
 
 /**
- * Pure rule-text transform for one path checkbox.
+ * Is a `!` re-include line needed to make this row included?
  *
- * `included` is the checkbox's new state:
- *  - unchecking excludes the path — usually by adding an exact rule; when the
- *    path was previously force-included by an auto `!` chain, only its own
- *    negation line is removed (ancestor `!/dir/` lines are left alone: they
- *    are harmless and may belong to other selections or hand-written rules);
- *  - checking includes it again — by removing an exact rule that names the
- *    path, or, when a broader pattern (a preset glob, or the `*` added by
- *    "Uncheck all") is what excludes it, by appending the negation chain so
- *    just this path is re-included.
+ * The explorer knows two things from its own scan: whether the row is ignored
+ * right now (`ignored`) and *which rule* did it (`pattern`). A pattern that is
+ * an exact line naming this very path is a line the explorer wrote itself, so
+ * deleting it is enough and no noise is added. Anything else — a preset glob
+ * like `*.log`, the `*` from "Uncheck all", an ignored parent folder — stays in
+ * the user's text and has to be outvoted by writing the chain after it. When in
+ * doubt the chain is written: a redundant `!` line is noise, a missing one is a
+ * checkbox that does nothing.
  */
-function applyPathToggle(text, path, included) {
-  const current = text || "";
-  const lines = current.split("\n").map((line) => line.trimEnd());
-  const exact = exactRuleLines(path);
-  const negations = exactNegationLines(path);
-  if (included) {
-    if (lines.some((line) => exact.includes(line))) {
-      return lines.filter((line) => !exact.includes(line)).join("\n");
-    }
-    const chain = includeChain(path).filter((line) => !lines.includes(line));
-    if (chain.length) {
-      return `${current.replace(/\s*$/, "")}\n${chain.join("\n")}`.trim() + "\n";
-    }
-    return current;
+function needsReincludeChain(entry, path, block) {
+  if (!entry) return true;
+  const clean = String(path || "").trim().replace(/^\/+|\/+$/g, "");
+  if (!entry.ignored) {
+    // The folder itself is fine but files inside it are not: the chain is what
+    // turns a half-ticked folder into a fully ticked one.
+    return Boolean(entry.is_dir) && (Number(entry.excluded) > 0 || Number(entry.ignored_dirs) > 0);
   }
-  if (lines.some((line) => negations.includes(line))) {
-    return lines.filter((line) => !negations.includes(line)).join("\n");
-  }
-  if (!lines.some((line) => exact.includes(line))) {
-    return `${current.replace(/\s*$/, "")}\n${path}`.trim() + "\n";
-  }
-  return current;
+  const rule = parseRule(entry.pattern || "");
+  if (!rule) return true; // a glob or the bare catch-all — never ours to delete
+  if (rule.path !== clean) return true; // another path (an ancestor) covers it
+  return !block.some((line) => {
+    const ours = parseRule(line);
+    return Boolean(ours) && !ours.negated && ours.path === clean;
+  });
 }
 
-/** Toggle one path in the active ignore rules (a checkbox in the sync preview). */
-export function toggleIgnoredPath(path, included) {
+/**
+ * Re-include chain for a folder: every ancestor, the folder itself, and
+ * `**` for everything below it (gitignore needs the parent chain before a
+ * child can be re-included at all).
+ */
+function folderChain(path) {
+  const parts = String(path).split("/").filter(Boolean);
+  const chain = parts.slice(0, -1).map((_part, index) => `!/${parts.slice(0, index + 1).join("/")}/`);
+  const full = parts.join("/");
+  return [...chain, `!/${full}/`, `!/${full}/**`];
+}
+
+/** `true` when the block only ever *re-included* this path, so deleting that is enough. */
+function onlyReincluded(block, matches) {
+  const negated = block.some((line) => matches(line) && parseRule(line)?.negated);
+  const excluded = block.some((line) => matches(line) && !parseRule(line)?.negated);
+  return negated && !excluded;
+}
+
+/**
+ * Pure rule-text transform for one file row.
+ *
+ * Ticking and unticking are exact mirrors of each other, so a round trip
+ * returns the ignore text to what it was.
+ */
+function applyPathToggle(text, path, included, entry = null) {
+  const { own, block } = splitRules(text);
+  const matches = (line) => namesPath(line, path);
+  const kept = block.filter((line) => !matches(line));
+  if (included) {
+    if (!needsReincludeChain(entry, path, block) || kept.includes(REINCLUDE_ALL)) return joinRules(own, kept);
+    const chain = includeChain(path).filter((line) => !kept.includes(line) && !own.includes(line.trim()));
+    return joinRules(own, [...kept, ...chain]);
+  }
+  if (block.includes(EXCLUDE_ALL)) return joinRules(own, block); // the catch-all already ignores it
+  if (onlyReincluded(block, matches)) return joinRules(own, kept);
+  return joinRules(own, [...kept, path]);
+}
+
+/**
+ * Pure rule-text transform for one folder row — a folder rule, never a line
+ * per file.
+ *
+ * Unchecking writes `/folder/`: gitignore ignores everything below an ignored
+ * folder, so one line covers all 4 000 files, including the ones the explorer
+ * never listed. Ticking it removes that line and — when something broader still
+ * ignores the folder or its contents — writes `!/folder/` + `!/folder/**`,
+ * which pulls every file inside back in. That is why a folder checkbox costs
+ * the same for a huge folder as for a small one and never depends on how many
+ * rows were loaded.
+ */
+function applyFolderToggle(text, folder, included, entry = null) {
+  const { own, block } = splitRules(text);
+  const matches = (line) => namesPath(line, folder, { inside: true });
+  const kept = block.filter((line) => !matches(line));
+  if (included) {
+    if (!needsReincludeChain({ ...entry, is_dir: true }, folder, block) || kept.includes(REINCLUDE_ALL)) {
+      return joinRules(own, kept);
+    }
+    const chain = folderChain(folder).filter((line) => !kept.includes(line) && !own.includes(line.trim()));
+    return joinRules(own, [...kept, ...chain]);
+  }
+  if (block.includes(EXCLUDE_ALL)) return joinRules(own, block);
+  if (onlyReincluded(block, matches)) return joinRules(own, kept);
+  return joinRules(own, [...kept, `/${folder}/`]);
+}
+
+/* ----------------------------------------------------- explorer data flows */
+
+/**
+ * Folder levels the explorer needs: the root plus every open folder, each at
+ * the window it currently shows (so a keystroke does not collapse a folder
+ * that was paged open) — and one page of headroom for "Show more".
+ */
+function explorerLevels(overrides = {}) {
+  const loaded = (tree.value && tree.value.levels) || {};
+  const paths = ["", ...(treeExpanded.value || [])].filter(
+    (path, index, all) => all.indexOf(path) === index
+  );
+  return paths.map((path) => {
+    const page = overrides[path] || {};
+    const shown = loaded[path] ? (loaded[path].entries || []).length : 0;
+    const offset = Number(page.offset) || 0;
+    return {
+      path,
+      offset,
+      size: Number(page.size) || (offset ? EXPLORER_PAGE_SIZE : Math.max(EXPLORER_PAGE_SIZE, shown)),
+    };
+  });
+}
+
+/**
+ * Load the file explorer for the active side (folder tree + counts).
+ *
+ * `options.depth` auto-opens folders below the ones already expanded
+ * ("Expand all"), `options.pages` requests a different window for one folder
+ * ("Show more"), and `options.append` merges that page into what is shown
+ * instead of replacing it.
+ */
+export async function refreshExplorer(options = {}) {
+  const draft = editor.value;
+  if (!draft?.local_path) return;
+  const side = ignoreSide.value;
+  const field = ignoreField(side);
+  const previous = tree.value || {};
+  const request = ++explorerSeq;
+  const levels = explorerLevels(options.pages);
+  const query = String(treeQuery.value || "").trim();
+  tree.value = { ...previous, loading: true, error: null };
+  try {
+    const data = await api("api/preview_tree", {
+      method: "POST",
+      body: {
+        local_path: draft.local_path,
+        ignore: draft[field] || "",
+        direction: side,
+        query,
+        depth: options.depth || 0,
+        levels,
+      },
+    });
+    if (request !== explorerSeq) return; // a newer refresh won
+    const fresh = { ...data.levels };
+    // `append` is a *path*, and the mapping folder's path is the empty string,
+    // so the check has to be against null and not for truthiness.
+    if (options.append != null && fresh[options.append] && previous.levels?.[options.append]) {
+      const before = previous.levels[options.append].entries || [];
+      fresh[options.append] = {
+        ...fresh[options.append],
+        entries: [...before, ...(fresh[options.append].entries || [])],
+      };
+    }
+    tree.value = { ...data, levels: fresh, loading: false, error: null };
+    if (options.expandFromResponse) {
+      treeExpanded.value = Object.keys(fresh).filter((path) => path);
+    }
+  } catch (err) {
+    if (request !== explorerSeq) return;
+    tree.value = { ...previous, loading: false, error: err?.message || String(err) };
+  }
+}
+
+/** Reload the explorer a moment after the last keystroke. */
+export function scheduleExplorerRefresh(delay = EXPLORER_DEBOUNCE) {
+  if (explorerTimer) clearTimeout(explorerTimer);
+  explorerTimer = setTimeout(() => {
+    explorerTimer = null;
+    refreshExplorer();
+  }, delay);
+}
+
+/** Filter the explorer (the whole folder is searched, not just what is open). */
+export function setExplorerQuery(value) {
+  treeQuery.value = value;
+  scheduleExplorerRefresh();
+}
+
+/** Open or close one folder in the tree; the first open loads its children. */
+export function toggleTreeFolder(path) {
+  if (!path) return;
+  const open = (treeExpanded.value || []).includes(path);
+  treeExpanded.value = open
+    ? (treeExpanded.value || []).filter((item) => item !== path)
+    : [...(treeExpanded.value || []), path];
+  if (open) return; // collapsing needs no data, the rows are already known
+  if (tree.value?.levels?.[path]) return; // already loaded (e.g. after Expand all)
+  refreshExplorer();
+}
+
+/** Open every folder the scan can reach below what is already visible. */
+export function expandAllFolders() {
+  return refreshExplorer({ depth: EXPAND_ALL_DEPTH, expandFromResponse: true });
+}
+
+/** Close every folder again. */
+export function collapseAllFolders() {
+  treeExpanded.value = [];
+  return refreshExplorer();
+}
+
+/** Load the next page of one folder's children (huge folders stay reachable). */
+export function showMoreInFolder(path) {
+  const level = tree.value?.levels?.[path];
+  return refreshExplorer({
+    pages: { [path]: { offset: level ? (level.entries || []).length : 0 } },
+    append: path,
+  });
+}
+
+/* ------------------------------------------------------ explorer checkboxes */
+
+/** Toggle one file row in the file explorer. */
+export function toggleIgnoredPath(path, included, entry = null) {
   const draft = editor.value;
   if (!draft || !path) return;
   const field = ignoreField();
-  patchEditor({ [field]: applyPathToggle(draft[field] || "", path, included) });
-  refreshIgnorePreview();
+  const next = applyPathToggle(draft[field] || "", path, included, entry);
+  if (next === (draft[field] || "")) {
+    refreshExplorer();
+    return;
+  }
+  patchEditor({ [field]: next });
+  refreshExplorer();
 }
 
-/**
- * Toggle every file inside one folder at once (a folder row in the preview).
- *
- * Reuses the exact per-file rule semantics from `applyPathToggle`, so folder
- * and file rows can never disagree, and refreshes the preview once for the
- * whole batch. Checking a partial folder only ticks its excluded files;
- * unchecking only unticks its included ones.
- */
-export function toggleIgnoredFolder(path, included) {
+/** Toggle one folder row (and with it everything inside, listed or not). */
+export function toggleIgnoredFolder(path, included, entry = null) {
   const draft = editor.value;
-  const result = preview.value;
-  if (!draft || !path || !result) return;
-  const prefix = `${path}/`;
-  const files = (included ? result.excluded || [] : result.included || [])
-    .filter((item) => !item.is_dir && String(item.path).startsWith(prefix))
-    .map((item) => item.path);
-  if (!files.length) return;
+  if (!draft || !path) return;
   const field = ignoreField();
-  let text = draft[field] || "";
-  for (const file of files) text = applyPathToggle(text, file, included);
-  patchEditor({ [field]: text });
-  refreshIgnorePreview();
+  const next = applyFolderToggle(draft[field] || "", path, included, entry);
+  if (next === (draft[field] || "")) {
+    refreshExplorer();
+    return;
+  }
+  patchEditor({ [field]: next });
+  refreshExplorer();
 }
 
 /**
- * "Uncheck all" — exclude everything on the active ignore side.
+ * "Uncheck all" / "Check all" — one catch-all line for the whole side.
  *
- * Normally this appends a single `*` rule; ticking a checkbox afterwards
- * re-includes just that file via an automatic `!` negation chain (see
- * `applyPathToggle`). Existing rules stay untouched; removing the `*` line by
- * hand restores them. When the catch-all is already present (everything was
- * unchecked before and got ticked back in), the `!` re-include lines are
- * dropped so the button does what it says even on the second round.
+ * Both replace the explorer block with a single rule, so the cost is the same
+ * for five files as for five thousand, and the button always does what it says
+ * (it used to be disabled unless *every* row was already checked, which in a
+ * real Home Assistant folder never happens, so it looked dead). The user's own
+ * rules stay in the text above the block; deleting the `*` / `!**` line — or
+ * pressing **Reset selection** — falls back on them.
  */
-export function uncheckAllPaths() {
+export function setAllPaths(included) {
   const draft = editor.value;
   if (!draft) return;
   const field = ignoreField();
-  const current = draft[field] || "";
-  const rawLines = current.split("\n");
-  const lines = rawLines.map((line) => line.trim());
-  const hasCatchAll = lines.includes("*") || lines.includes("**");
-  if (hasCatchAll) {
-    const negationCount = lines.filter((line) => line.startsWith("!")).length;
-    if (!negationCount) {
-      pushToast("Everything is already unchecked — tick files to sync them again", "info");
-      return;
-    }
-    patchEditor({ [field]: rawLines.filter((line, index) => !lines[index].startsWith("!")).join("\n") });
-  } else {
-    patchEditor({ [field]: `${current.replace(/\s*$/, "")}\n*`.trim() + "\n" });
+  const { own, block } = splitRules(draft[field] || "");
+  const marker = included ? REINCLUDE_ALL : EXCLUDE_ALL;
+  if (block.length === 1 && block[0] === marker) {
+    pushToast(included ? "Everything is already checked" : "Everything is already unchecked", "info");
+    return;
   }
-  pushToast("All files unchecked — tick the ones you want to sync", "success");
-  refreshIgnorePreview();
+  patchEditor({ [field]: joinRules(own, [marker]) });
+  pushToast(
+    included
+      ? "All files checked — your own rules above are overridden by !**"
+      : "All files unchecked — tick the folders or files you want to sync",
+    "success"
+  );
+  refreshExplorer();
+}
+
+/** "Uncheck all": ignore everything on this side, then tick what to keep. */
+export function uncheckAllPaths() {
+  return setAllPaths(false);
+}
+
+/** "Check all": include everything on this side again. */
+export function checkAllPaths() {
+  return setAllPaths(true);
+}
+
+/** Drop every rule the explorer wrote; the user's own rules are untouched. */
+export function resetExplorerRules() {
+  const draft = editor.value;
+  if (!draft) return;
+  const field = ignoreField();
+  const { own, block } = splitRules(draft[field] || "");
+  if (!block.length) {
+    pushToast("The explorer has not written any rules on this side", "info");
+    return;
+  }
+  patchEditor({ [field]: joinRules(own, []) });
+  pushToast("Selection cleared — your own rules are unchanged", "success");
+  refreshExplorer();
 }
 
 /** Persist the wizard draft. */
@@ -415,6 +686,7 @@ export async function saveMapping() {
     pushToast("Mapping saved", "success");
     editor.value = null;
     browser.value = null;
+    resetExplorer();
     view.value = "list";
     await refresh();
   } catch (_err) {

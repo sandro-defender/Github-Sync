@@ -623,6 +623,114 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--a
 .crumbs button { appearance: none; border: 0; background: transparent; color: var(--accent); font: inherit; cursor: pointer; padding: 1px 2px; }
 .crumbs button:hover { text-decoration: underline; }
 
+/* ----------------------------------------------------------- file explorer */
+
+.explorer-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.explorer-bar .spacer { flex: 1 1 12px; }
+.explorer-filter { flex: 1 1 240px; min-width: 0; }
+.explorer-clear {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.78rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 6px;
+  border-radius: var(--radius-pill);
+  cursor: pointer;
+}
+.explorer-clear:hover { color: var(--accent); background: var(--accent-soft); }
+
+.explorer-stats { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.explorer-stats .meta b { color: var(--text-strong); font-variant-numeric: tabular-nums; }
+.explorer-loading { display: inline-flex; align-items: center; gap: 6px; }
+.explorer-hint { display: block; margin: 10px 0 0; line-height: 1.5; }
+.explorer-hint em { font-style: normal; color: var(--text-strong); }
+
+/* The tree: one row per file and per folder, indented by depth. */
+.list.tree { max-height: min(58vh, 560px); padding: 2px 0; font-size: 0.85rem; }
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px 4px 4px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border) 55%, transparent);
+  transition: background var(--speed) var(--ease);
+}
+.tree-row:last-child { border-bottom: 0; }
+.tree-row:hover { background: var(--surface-hover); }
+.tree-row .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-row .meta {
+  color: var(--muted);
+  font-size: 0.73rem;
+  white-space: nowrap;
+  flex: none;
+  max-width: 46%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tree-row.file { cursor: pointer; }
+.tree-row input.tree-tick { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; flex: none; cursor: pointer; }
+.tree-row.unchecked > .grow,
+.tree-row.unchecked .tree-name,
+.tree-row.unchecked > .meta { color: var(--muted); }
+/* Unchecked and partial rows stay readable: dimmed, never struck through. */
+.tree-row.partial { background: color-mix(in srgb, var(--warn) 6%, transparent); }
+.tree-row.open > .tree-name { color: var(--text-strong); }
+
+.tree-toggle {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  width: 22px;
+  height: 22px;
+  flex: none;
+  padding: 0;
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.tree-toggle:hover { color: var(--accent); background: var(--accent-soft); }
+.tree-toggle.placeholder { cursor: default; }
+.tree-toggle.placeholder:hover { background: transparent; }
+
+.tree-name {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tree-name:hover { color: var(--accent); text-decoration: underline; }
+
+.tree-more { display: flex; align-items: center; gap: 10px; padding: 3px 10px 6px 4px; }
+.tree-more .meta { color: var(--muted); font-size: 0.73rem; }
+.tree-search-head {
+  padding: 7px 12px;
+  font-size: 0.78rem;
+  color: var(--muted);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+
+@media (max-width: 640px) {
+  .tree-row .meta { display: none; }
+  .explorer-bar { gap: 6px; }
+}
+
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chips.inline { display: inline-flex; }
 
