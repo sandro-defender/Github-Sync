@@ -14,6 +14,14 @@
 
 ## [Unreleased]
 
+### Sync preview: folder rows, readable unchecked rows, gated “Uncheck all”
+
+- **Folder rows in the “What will be synced” preview.** Files inside subfolders no longer each get their own row: everything under a top-level folder collapses into a single folder row with a tri-state checkbox (checked = all files included, unchecked = none, indeterminate = a mix — one tick completes the folder). Ticking a folder re-includes every excluded file in it; unticking one excludes every included file in it. Both reuse the exact per-file rule semantics (exact rules and `!` negation chains), so folder and file rows can never disagree. Excluded folders the walk pruned (e.g. `.storage/` from a preset) remain selectable as unchecked rows; always-ignored folders (`.git`) are hidden because ticking them can never work.
+- **Unchecked rows are no longer struck through.** Ignored files and folders keep fully readable text and are only dimmed slightly, so excluded paths stay identifiable without a line through them.
+- **“Uncheck all” is gated.** The button (per upload/download side) is only enabled while every file is checked. It still appends one `*` rule and never duplicates it; if the catch-all already exists and you ticked files back in, pressing it again drops the temporary `!` re-include lines so the result is still “everything unchecked”.
+- **API.** `api/preview_ignore` now also returns `excluded_file_count` (excluded files only, folders excluded), keeping the “… and N more ignored files” hint accurate once folder rows group the list. Excluded directory entries that are always-ignored carry an `always_ignored: true` flag.
+- **Tests.** The frontend suite now covers folder-row grouping and partial states, `.git` hiding, pruned-folder rows, the Uncheck all disabled/enabled lifecycle (including no duplicate `*`), folder-tick negation chains, and a CSS regression check that unchecked rows never get a strikethrough. 83 Python + 15 frontend tests pass.
+
 ### File selection in the sync preview + GitHub repository settings link (current session)
 
 - **Fixed: the "What will be synced" checkboxes never changed anything.** The mapping wizard's ignore preview showed checked/unchecked rows, but the change handler inverted the checkbox state (`!ev.target.checked`), so unticking a file asked to *include* it (a no-op) and ticking an ignored file asked to *exclude* it (also a no-op). The selection was frozen. Unticking a file now excludes it (exact ignore rule), and ticking an ignored file includes it again (the rule is removed).

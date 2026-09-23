@@ -615,8 +615,10 @@ input:focus, textarea:focus, select:focus { outline: none; border-color: var(--a
 .list-row em { display: block; color: var(--muted); font-style: normal; font-size: 0.76rem; overflow: hidden; text-overflow: ellipsis; }
 .list-row.check { cursor: pointer; }
 .list-row.check input { accent-color: var(--accent); }
+/* Unchecked rows stay readable — no strikethrough, just a softer tone. */
 .list-row.excluded { color: var(--muted); }
-.list-row.excluded .grow { text-decoration: line-through; opacity: 0.75; }
+.list-row.excluded .grow { opacity: 0.85; }
+.list-row.partial .grow { opacity: 1; }
 .crumbs { display: flex; gap: 4px; flex-wrap: wrap; font-size: 0.82rem; align-items: center; }
 .crumbs button { appearance: none; border: 0; background: transparent; color: var(--accent); font: inherit; cursor: pointer; padding: 1px 2px; }
 .crumbs button:hover { text-decoration: underline; }

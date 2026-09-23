@@ -186,6 +186,9 @@ def collect_files(
                         "is_dir": True,
                         "size": 0,
                         "pattern": matcher.matching_pattern(rel, True) or ALWAYS_IGNORE.strip(),
+                        # Hard-coded exclusion: the UI hides these rows because
+                        # ticking them can never re-include the folder.
+                        "always_ignored": True,
                     }
                 )
                 continue

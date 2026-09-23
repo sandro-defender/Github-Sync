@@ -283,7 +283,7 @@ test("editor wizard walks folder → repo → rules → review and saves one map
       "api/browse?path=": { path: "", parent: null, root: "Home Assistant", entries: [{ name: "homeassistant", path: "homeassistant", is_dir: true }] },
       "api/repos": { repos: [{ full_name: "owner/ha-esphome", default_branch: "main", private: false, description: "ESPHome config" }] },
       "api/branches?repository=owner%2Fha-esphome": { branches: ["main", "dev"] },
-      "api/preview_ignore": { direction: "upload", included: [{ path: "esphome/kitchen.yaml", size: 120 }], excluded: [], included_count: 1, excluded_count: 0, included_size: 120, truncated: false },
+      "api/preview_ignore": { direction: "upload", included: [{ path: "esphome/kitchen.yaml", size: 120 }], excluded: [], included_count: 1, excluded_count: 0, excluded_file_count: 0, included_size: 120, truncated: false },
     },
   });
   await modules.actions.refresh();
@@ -310,7 +310,13 @@ test("editor wizard walks folder → repo → rules → review and saves one map
   modules.actions.gotoStep(3);
   await modules.actions.refreshIgnorePreview();
   await paint();
-  assert.match(root.innerHTML, /esphome\/kitchen\.yaml/);
+  const folderRow = [...root.querySelectorAll("label")].find(
+    (node) => node.classList.contains("list-row") && node.classList.contains("folder")
+  );
+  assert.ok(folderRow, "files inside a folder collapse into a single folder row");
+  assert.match(folderRow.textContent, /esphome/);
+  assert.match(folderRow.textContent, /1 file/);
+  assert.equal(folderRow.querySelector("input").checked, true, "fully included folder renders checked");
 
   modules.actions.gotoStep(4);
   await paint();
@@ -374,6 +380,7 @@ test("ignore preview checkboxes uncheck, re-check and chain-negate files", async
     excluded: [{ path: "b.log", size: 4, is_dir: false, pattern: "*.log" }],
     included_count: 2,
     excluded_count: 1,
+    excluded_file_count: 1,
     included_size: 16,
     truncated: false,
   };
@@ -384,6 +391,7 @@ test("ignore preview checkboxes uncheck, re-check and chain-negate files", async
     preview.excluded = excluded;
     preview.included_count = included.length;
     preview.excluded_count = excluded.length;
+    preview.excluded_file_count = excluded.filter((item) => !item.is_dir).length;
     preview.included_size = included.reduce((sum, file) => sum + (file.size || 0), 0);
   };
 
@@ -407,6 +415,11 @@ test("ignore preview checkboxes uncheck, re-check and chain-negate files", async
     input.dispatchEvent({ type: "change" });
   };
   const rules = () => modules.state.editor.value.ignore_upload;
+  const uncheckAllButton = () => findButton(root, "Uncheck all");
+
+  // "Uncheck all" stays disabled while anything is unchecked.
+  assert.ok(uncheckAllButton(), "preview offers Uncheck all");
+  assert.equal(uncheckAllButton().disabled, true, "b.log is unchecked, so the button is disabled");
 
   // Unchecking an included file excludes it with an exact rule.
   assert.equal(checkboxOf("a.yaml").input.checked, true);
@@ -426,20 +439,30 @@ test("ignore preview checkboxes uncheck, re-check and chain-negate files", async
   await paint();
   assert.equal(rules().trim(), "*.log", "check removes the exact ignore line");
 
-  // "Uncheck all" appends one catch-all rule and never duplicates it.
-  const uncheckAll = findButton(root, "Uncheck all");
-  assert.ok(uncheckAll, "preview offers Uncheck all");
-  uncheckAll.click();
+  // Everything checked → the button unlocks, appends one catch-all rule and
+  // never duplicates it.
+  setPreview(
+    [
+      { path: "a.yaml", size: 10, is_dir: false },
+      { path: "sub/c.yaml", size: 6, is_dir: false },
+    ],
+    []
+  );
+  await modules.actions.refreshIgnorePreview();
+  await paint();
+  assert.equal(uncheckAllButton().disabled, false, "all rows checked unlocks Uncheck all");
+  uncheckAllButton().click();
   await paint();
   assert.equal(rules().trim().split("\n").filter((line) => line.trim() === "*").length, 1, "one `*` rule added");
   assert.match(rules(), /(^|\n)\*\n/);
-  uncheckAll.click();
+  uncheckAllButton().click();
   await paint();
   assert.equal(rules().trim().split("\n").filter((line) => line.trim() === "*").length, 1, "no duplicate `*` rule");
   const previewCall = [...calls].reverse().find((call) => call.url === "api/preview_ignore" && call.body);
   assert.match(previewCall.body.ignore, /(^|\n)\*(\n|$)/, "preview refresh sends the new rules");
 
-  // Ticking a nested file excluded by `*` appends a ! chain: parents, then file.
+  // With the catch-all in place every row is unchecked → the button disables
+  // again until everything is ticked back in.
   setPreview([], [
     { path: "a.yaml", size: 10, is_dir: false, pattern: "*" },
     { path: "b.log", size: 4, is_dir: false, pattern: "*" },
@@ -447,23 +470,159 @@ test("ignore preview checkboxes uncheck, re-check and chain-negate files", async
   ]);
   await modules.actions.refreshIgnorePreview();
   await paint();
-  toggle("sub/c.yaml", true);
+  assert.equal(uncheckAllButton().disabled, true, "everything unchecked disables Uncheck all again");
+
+  // Ticking the folder row re-includes all of its files: parent first, then files.
+  toggle("sub", true);
   await paint();
   assert.match(rules(), /(^|\n)!\/sub\/\n/, "parent folder is re-included first");
   assert.match(rules(), /(^|\n)!\/sub\/c\.yaml\n/, "the file itself is re-included");
 
-  // Unticking that file again removes only its own negation, not the folder chain.
+  // Unticking the folder again removes only the file negation, not the chain.
   setPreview([{ path: "sub/c.yaml", size: 6, is_dir: false }], [
     { path: "a.yaml", size: 10, is_dir: false, pattern: "*" },
     { path: "b.log", size: 4, is_dir: false, pattern: "*" },
   ]);
   await modules.actions.refreshIgnorePreview();
   await paint();
-  assert.equal(checkboxOf("sub/c.yaml").input.checked, true, "chained file renders checked");
-  toggle("sub/c.yaml", false);
+  assert.equal(checkboxOf("sub").input.checked, true, "fully included folder renders checked");
+  toggle("sub", false);
   await paint();
   assert.ok(!/(^|\n)!\/sub\/c\.yaml(\n|$)/.test(rules()), "the file negation is removed");
   assert.match(rules(), /(^|\n)!\/sub\/(\n|$)/, "ancestor negation stays for other selections");
+});
+
+test("preview groups folder files into folder rows and gates Uncheck all", async () => {
+  const file = (path, size, extra = {}) => ({ path, size, is_dir: false, ...extra });
+  const preview = {
+    direction: "upload",
+    included: [
+      file("a.yaml", 10),
+      file("sub/c.yaml", 6),
+      file("sub/nested/d.yaml", 8),
+      file("other/e.yaml", 4),
+    ],
+    excluded: [
+      file("sub/junk.log", 2, { pattern: "*.log" }),
+      { path: ".storage", is_dir: true, size: 0, pattern: ".storage/" },
+      { path: ".git", is_dir: true, size: 0, pattern: ".git/", always_ignored: true },
+    ],
+    included_count: 4,
+    excluded_count: 3,
+    excluded_file_count: 1,
+    included_size: 28,
+    truncated: false,
+  };
+  const root = await boot({ responses: { "api/preview_ignore": preview } });
+  await modules.actions.refresh();
+  const setPreview = (included, excluded) => {
+    preview.included = included;
+    preview.excluded = excluded;
+    preview.included_count = included.length;
+    preview.excluded_count = excluded.length;
+    preview.excluded_file_count = excluded.filter((item) => !item.is_dir).length;
+    preview.included_size = included.reduce((sum, item) => sum + (item.size || 0), 0);
+  };
+
+  modules.actions.startNewMapping();
+  modules.state.ignoreSide.value = "upload";
+  modules.actions.patchEditor({ local_path: "homeassistant", ignore_upload: "*.log\n.storage/\n" });
+  modules.actions.gotoStep(3);
+  await paint();
+
+  const row = (name) =>
+    [...root.querySelectorAll("label")].find(
+      (node) => node.classList.contains("list-row") && node.textContent.includes(name)
+    );
+  const toggle = (name, checked) => {
+    const target = row(name);
+    assert.ok(target, `a checkbox row exists for ${name}`);
+    const input = target.querySelector("input");
+    input.checked = checked;
+    input.dispatchEvent({ type: "change" });
+  };
+  const rules = () => modules.state.editor.value.ignore_upload;
+  const uncheckAllButton = () => findButton(root, "Uncheck all");
+
+  // Folders collapse into single rows with tri-state checkboxes.
+  const sub = row("sub");
+  assert.ok(sub.classList.contains("folder"), "nested files collapse into a folder row");
+  assert.match(sub.textContent, /2 of 3 files/, "partial folder shows included vs total");
+  assert.equal(sub.querySelector("input").checked, false, "partial folder is not fully checked");
+  assert.ok(!sub.classList.contains("excluded"), "partial folders keep readable text");
+  const other = row("other");
+  assert.equal(other.querySelector("input").checked, true, "fully included folder renders checked");
+  assert.match(other.textContent, /1 file/);
+
+  // Always-ignored folders stay hidden; pruned folders remain selectable.
+  assert.ok(!row(".git"), ".git is hidden from the list");
+  const storage = row(".storage");
+  assert.ok(storage.classList.contains("folder"), "pruned folders still get a row");
+  assert.equal(storage.querySelector("input").checked, false, "pruned folder is unchecked");
+  assert.match(storage.textContent, /\.storage\//);
+
+  // "Uncheck all" stays disabled while anything is unchecked.
+  assert.equal(uncheckAllButton().disabled, true);
+
+  // Unchecking a fully checked folder writes one exact rule per file.
+  toggle("other", false);
+  await paint();
+  assert.match(rules(), /(^|\n)other\/e\.yaml\n/, "folder uncheck adds per-file rules");
+
+  // Checking a partial folder ticks only its excluded file, chain-negated.
+  setPreview([file("a.yaml", 10), file("sub/c.yaml", 6), file("sub/nested/d.yaml", 8)], [
+    file("other/e.yaml", 4, { pattern: "other/e.yaml" }),
+    file("sub/junk.log", 2, { pattern: "*.log" }),
+    { path: ".storage", is_dir: true, size: 0, pattern: ".storage/" },
+  ]);
+  await modules.actions.refreshIgnorePreview();
+  await paint();
+  toggle("sub", true);
+  await paint();
+  assert.match(rules(), /(^|\n)!\/sub\/\n/, "parent folder is re-included first");
+  assert.match(rules(), /(^|\n)!\/sub\/junk\.log\n/, "the excluded file is re-included");
+
+  // Unticking the now-fully-checked folder removes the file rule, keeps the chain.
+  setPreview([
+    file("a.yaml", 10),
+    file("sub/c.yaml", 6),
+    file("sub/nested/d.yaml", 8),
+    file("sub/junk.log", 2),
+  ], [
+    file("other/e.yaml", 4, { pattern: "other/e.yaml" }),
+    { path: ".storage", is_dir: true, size: 0, pattern: ".storage/" },
+  ]);
+  await modules.actions.refreshIgnorePreview();
+  await paint();
+  assert.equal(row("sub").querySelector("input").checked, true, "fully included folder renders checked");
+  toggle("sub", false);
+  await paint();
+  assert.ok(!/(^|\n)!\/sub\/junk\.log(\n|$)/.test(rules()), "file negation is removed");
+  assert.match(rules(), /(^|\n)!\/sub\/(\n|$)/, "ancestor negation stays for other selections");
+  assert.match(rules(), /(^|\n)sub\/c\.yaml\n/, "included files are excluded with exact rules");
+
+  // Everything checked again → the button unlocks.
+  setPreview([
+    file("a.yaml", 10),
+    file("sub/c.yaml", 6),
+    file("sub/nested/d.yaml", 8),
+    file("other/e.yaml", 4),
+  ], []);
+  await modules.actions.refreshIgnorePreview();
+  await paint();
+  assert.equal(uncheckAllButton().disabled, false, "enabled once every row is checked");
+});
+
+test("unchecked preview rows keep readable text (no strikethrough)", () => {
+  const css = fs.readFileSync(
+    path.join(__dirname, "..", "github_sync", "app", "static", "styles.css"),
+    "utf8"
+  );
+  const excludedRules = css.match(/\.list-row\.excluded[^}]*}/g) || [];
+  assert.ok(excludedRules.length, "excluded row styles exist");
+  for (const rule of excludedRules) {
+    assert.ok(!rule.includes("line-through"), `excluded rows stay readable: ${rule}`);
+  }
 });
 
 test("settings links to the GitHub page that manages repository access", async () => {
