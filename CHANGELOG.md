@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.8.0] - 2026-09-23
+
+- fix(ui): set the tri-state tick inside the diff, not from a useEffect
+- feat(ui): file explorer tree for ignore rules — tick any file or folder at any depth
+
 ## [0.7.0] - 2026-09-23
 
 - feat(ui): folder rows in sync preview, readable unchecked rows, gated Uncheck all
