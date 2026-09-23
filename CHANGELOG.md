@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.8.1] - 2026-09-23
+
+- fix(updates,settings,explorer): direct GitHub update checks, repo manage link, operation mode save, and explorer deselect
+
 ## [0.8.0] - 2026-09-23
 
 - fix(ui): set the tri-state tick inside the diff, not from a useEffect
