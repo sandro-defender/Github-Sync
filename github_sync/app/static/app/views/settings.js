@@ -11,11 +11,34 @@ const SCOPE_LABELS = {
   repo: "All repositories you can access (private included)",
 };
 
+/**
+ * Where on GitHub the repository access of the current connection is managed.
+ *
+ * Fine-grained tokens select repositories on GitHub itself; OAuth device
+ * grants cannot be limited per repository, so the app-side allowlist (or a
+ * fine-grained token) is the answer there.
+ */
+function githubRepoSettings(authMethod) {
+  if (authMethod === "token") {
+    return {
+      href: "https://github.com/settings/personal-access-tokens",
+      label: "Add or remove repositories on GitHub",
+      hint: "On GitHub open your fine-grained token → Repository access → “Only select repositories” to add or remove repos, save, then Reload here.",
+    };
+  }
+  return {
+    href: "https://github.com/settings/applications",
+    label: "Review authorization on GitHub",
+    hint: "GitHub cannot limit an OAuth grant per repository. Use Manage access above for app-enforced repository limits, or connect a fine-grained token for GitHub-enforced repository selection.",
+  };
+}
+
 /** GitHub account + authorization details. */
 function GitHubCard() {
   const info = status.value || {};
   const access = info.access || {};
   const repositories = access.repositories || [];
+  const repoSettings = info.configured ? githubRepoSettings(info.auth_method) : null;
   return html`<${Card}
     title="GitHub connection"
     icon="github"
@@ -55,9 +78,15 @@ function GitHubCard() {
         </${Banner}>`}
     <div class="row">
       ${info.configured
-        ? html`<${Button} variant="ghost" icon="logout" onClick=${logout}>Log out</${Button}>`
+        ? html`<${Button} variant="ghost" icon="logout" onClick=${logout}>Log out</${Button}>
+            <a class="btn ghost sm" href=${repoSettings.href} target="_blank" rel="noopener noreferrer">
+              <${Icon} name="github" size=${15} />
+              <span class="btn-label">${repoSettings.label}</span>
+              <${Icon} name="external" size=${14} />
+            </a>`
         : html`<${Button} icon="github" onClick=${() => openAuthSetup()}>Connect GitHub</${Button}>`}
     </div>
+    ${repoSettings ? html`<p class="meta">${repoSettings.hint}</p>` : null}
     <p class="meta">
       App-side limits are enforced by this app; only a fine-grained token restricts what the GitHub grant itself can do.
       Logging out clears local credentials and does not revoke GitHub grants.

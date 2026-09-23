@@ -10,7 +10,14 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "github_sync" / "app"))
 
-from paths import PathError, browse_directory, discover_roots, resolve_under_roots  # noqa: E402
+from ignore import IgnoreMatcher  # noqa: E402
+from paths import (  # noqa: E402
+    PathError,
+    browse_directory,
+    collect_files,
+    discover_roots,
+    resolve_under_roots,
+)
 
 
 class PathTests(unittest.TestCase):
@@ -53,6 +60,33 @@ class PathTests(unittest.TestCase):
             self.assertIn("workspace", found)
         finally:
             os.environ.pop("GITHUB_SYNC_ROOTS", None)
+
+    def _collect(self, rules: str):
+        matcher = IgnoreMatcher(rules)
+        included, excluded, _truncated = collect_files(self.roots, "homeassistant", matcher)
+        return (
+            sorted(item["path"] for item in included),
+            sorted(item["path"] for item in excluded),
+        )
+
+    def test_hand_folder_rule_prunes_children(self) -> None:
+        # A hand-written folder rule keeps the pruning fast-path: children are
+        # not walked or listed individually.
+        included, excluded = self._collect("esphome/\n")
+        self.assertEqual(included, [])
+        self.assertEqual(excluded, ["esphome"])
+
+    def test_catchall_expands_folders_so_files_stay_selectable(self) -> None:
+        # The UI's "Uncheck all" adds `*`: files inside folders must stay
+        # visible (not pruned with the folder) so each can be re-included.
+        included, excluded = self._collect("*\n")
+        self.assertEqual(included, [])
+        self.assertEqual(excluded, ["esphome", "esphome/living.yaml"])
+
+        # A negation chain re-includes one file under the catch-all rule.
+        included, excluded = self._collect("*\n!/esphome/\n!/esphome/living.yaml\n")
+        self.assertEqual(included, ["esphome/living.yaml"])
+        self.assertEqual(excluded, [])
 
 
 if __name__ == "__main__":

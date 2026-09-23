@@ -13,6 +13,7 @@ import {
   saveMapping,
   setIgnoreSide,
   toggleIgnoredPath,
+  uncheckAllPaths,
 } from "../actions.js";
 import { bytes, directionLabel, intervalLabel, matchesQuery } from "../format.js";
 import { branches, browser, editor, ignoreSide, preview, presets, repoQuery, repos } from "../state.js";
@@ -228,37 +229,56 @@ export function IgnoreStep({ draft }) {
       </div>
     </${Card}>
 
-    <${Card} title="What will be synced" icon="eye">
+    <${Card}
+      title="What will be synced"
+      icon="eye"
+      actions=${result
+        ? html`<${Button}
+            variant="ghost"
+            size="sm"
+            icon="close"
+            title="Ignore everything on this side, then tick only the files you want to sync"
+            onClick=${uncheckAllPaths}
+          >Uncheck all</${Button}>`
+        : null}
+    >
       ${result
         ? html`<div class="stats">
               <div class="stat"><b>${result.included_count}</b><span>included (${bytes(result.included_size)})</span></div>
               <div class="stat"><b>${result.excluded_count}</b><span>ignored</span></div>
             </div>
             <div class="list tall">
-              ${(result.included || []).slice(0, 300).map(
+              ${(result.included || []).slice(0, 500).map(
                 (file) => html`<label class="list-row check" key=${file.path}>
                   <input
                     type="checkbox"
                     checked
-                    onChange=${(ev) => toggleIgnoredPath(file.path, !ev.target.checked)}
+                    onChange=${(ev) => toggleIgnoredPath(file.path, ev.target.checked)}
                   />
                   <${Icon} name=${file.is_dir ? "folder" : "file"} size=${15} />
                   <span class="grow mono">${file.path}</span>
                   <span class="meta">${file.is_dir ? "folder" : bytes(file.size)}</span>
                 </label>`
               )}
+              ${(result.included_count || 0) > 500
+                ? html`<div class="list-row muted">… and ${result.included_count - 500} more included files</div>`
+                : null}
               ${(result.excluded || [])
                 .filter((file) => !file.is_dir)
-                .slice(0, 120)
+                .slice(0, 300)
                 .map(
                   (file) => html`<label class="list-row check excluded" key=${file.path}>
-                    <input type="checkbox" onChange=${(ev) => toggleIgnoredPath(file.path, !ev.target.checked)} />
+                    <input type="checkbox" onChange=${(ev) => toggleIgnoredPath(file.path, ev.target.checked)} />
                     <${Icon} name="file" size=${15} />
                     <span class="grow mono">${file.path}</span>
                     <span class="meta">${file.pattern || "ignored"}</span>
                   </label>`
                 )}
-            </div>`
+              ${(result.excluded_count || 0) > 300
+                ? html`<div class="list-row muted">… and ${result.excluded_count - 300} more ignored files</div>`
+                : null}
+            </div>
+            <p class="meta">Untick a file to ignore it; tick an ignored file to include it again. The rules above update for you.</p>`
         : html`<p class="meta">Choose a folder in step 1 to see which files are included and ignored.</p>`}
     </${Card}>
   </div>`;
