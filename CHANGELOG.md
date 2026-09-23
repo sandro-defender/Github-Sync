@@ -27,6 +27,16 @@
 
 ## [Unreleased]
 
+### Widescreen brother windows and GitHub App installation options
+
+- **Widescreen brother windows for mapping rules & file explorer.** Step 3 of the mapping editor ("Ignore rules") now displays two side-by-side ("brother") windows/panels on widescreen displays (min-width 960px or toggled via the toolbar): one panel for Upload rules & file explorer (Local → GitHub) and one panel for Download rules & file explorer (GitHub → Local). Each window provides independent preset chips, gitignore pattern editing, re-scanning, and interactive folder tree ticking. A toolbar toggle allows users to switch between side-by-side and single tabbed view at any time on any screen size.
+- **GitHub App installation navigation.** Added GitHub App installation options and direct links (`https://github.com/settings/installations`) in the connection setup dialog (`AuthSetupDialog`) and Settings view (`GitHubCard`), giving users easy access to install or manage GitHub App repositories directly on GitHub alongside OAuth device authorization and fine-grained tokens.
+
+### File explorer deselect fixes and repository allowlist accessibility
+
+- **Folder and file deselect in file explorer.** Fixed an issue where deselecting a file or subfolder inside a re-included folder (e.g. under `!/folder/**` or `!**`) failed because `applyPathToggle` and `applyFolderToggle` did not add explicit exclusion rules when an ancestor re-include was present in the explorer block. Unticking a file or subfolder covered by an ancestor re-include now appends an explicit exclusion rule (`path` or `/${folder}/`) to outvote the re-include rule. Also fixed unticking a folder without catch-all rules so that it writes an explicit folder exclusion (`/${folder}/`) rather than dropping re-includes and returning to an included/partial state.
+- **Repository allowlist unrestricted default & discovery.** Fixed an issue where leaving the repository allowlist empty (as prompted by "Leave empty to allow every repository the account can see") was treated as allowing zero repositories, which hid all repositories from the repo picker (`api/repos`) and rejected sync with `AccessDenied`. An empty allowlist now correctly allows all repositories accessible to the authenticated account. Added an in-wizard notice and manage link on Step 2 ("Which repository?") when repository allowlist filtering is active, and clarified in Settings that OAuth device authorization is registered on GitHub as **"GitHub CLI"** under Settings → Applications → Authorized OAuth Apps.
+
 ### Direct GitHub update checking, repo management button, and explorer fixes
 
 - **Direct GitHub release check on update requests.** Previously, update checks prioritized Supervisor and did not query GitHub when running with a Supervisor token. Because Home Assistant Supervisor caches repository metadata and polls on a multi-hour schedule, clicking "Check for update" reported that the app was already on the latest version even after a new release was published on GitHub. The update checker now queries GitHub releases directly on check, compares against Supervisor, surfaces newer GitHub releases immediately, and triggers Supervisor store reloads (`POST /store/reload`) on forced checks so Supervisor immediately discovers the new release.

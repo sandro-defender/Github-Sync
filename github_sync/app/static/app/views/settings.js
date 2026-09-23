@@ -29,7 +29,7 @@ function githubRepoSettings(authMethod) {
   return {
     href: "https://github.com/settings/applications",
     label: "Review authorization on GitHub",
-    hint: "GitHub cannot limit an OAuth grant per repository. Use Manage access above for app-enforced repository limits, or connect a fine-grained token for GitHub-enforced repository selection.",
+    hint: "Device authorization connects via GitHub's official CLI client (authorized on GitHub as “GitHub CLI” under Settings → Applications → Authorized OAuth Apps). OAuth grants account-wide access within the chosen scope; use Manage access above to select which repositories this app can sync.",
   };
 }
 
@@ -69,7 +69,7 @@ function GitHubCard() {
             <dd>
               ${repositories.length
                 ? html`<span class="chips inline">${repositories.map((repo) => html`<${Badge} key=${repo} tone="neutral" icon="github">${repo}</${Badge}>`)}</span>`
-                : html`<span class="meta">No allowlist set — app limits are unrestricted.</span>`}
+                : html`<span class="meta">No allowlist set — all repositories are accessible.</span>`}
             </dd>
           </div>
         </dl>`
@@ -93,7 +93,8 @@ function GitHubCard() {
     </div>
     ${repoSettings ? html`<p class="meta">${repoSettings.hint}</p>` : null}
     <p class="meta">
-      App-side limits are enforced by this app; only a fine-grained token restricts what the GitHub grant itself can do.
+      App-side limits are enforced by this app; use Manage access above to add or remove allowed repositories (or leave empty to allow all).
+      On GitHub, device authorization is listed under <strong>Settings → Applications → Authorized OAuth Apps as “GitHub CLI”</strong>.
       Logging out clears local credentials and does not revoke GitHub grants.
     </p>
   </${Card}>`;

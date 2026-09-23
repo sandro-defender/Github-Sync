@@ -986,6 +986,37 @@ test("deselecting folder and file under catch-all removes re-include rules", asy
   assert.ok(!modules.state.editor.value.ignore_upload.includes("!/myfolder/file.txt"), "file re-include removed on untick");
 });
 
+test("deselecting file or subfolder inside re-included folder writes explicit exclusion", async () => {
+  await boot();
+  modules.actions.startNewMapping();
+  modules.actions.patchEditor({
+    local_path: "homeassistant",
+    ignore_upload: "# GitHub Sync selection — the file explorer edits the lines below\n*\n!/myfolder/\n!/myfolder/**\n",
+  });
+  modules.state.ignoreSide.value = "upload";
+
+  // Untick a file inside myfolder while myfolder/** is still active
+  modules.actions.toggleIgnoredPath("myfolder/subfile.yaml", false, { is_dir: false, path: "myfolder/subfile.yaml" });
+  await paint();
+  let rules = modules.state.editor.value.ignore_upload;
+  assert.ok(rules.includes("myfolder/subfile.yaml"), "explicit rule added to exclude file under re-included parent folder");
+
+  // Untick a subfolder inside myfolder while myfolder/** is still active
+  modules.actions.toggleIgnoredFolder("myfolder/sub", false, { is_dir: true, path: "myfolder/sub" });
+  await paint();
+  rules = modules.state.editor.value.ignore_upload;
+  assert.ok(rules.includes("/myfolder/sub/"), "explicit rule added to exclude subfolder under re-included parent folder");
+
+  // Unticking folder when no catch-all exists appends exact folder rule
+  modules.actions.patchEditor({
+    ignore_upload: "",
+  });
+  modules.actions.toggleIgnoredFolder("esphome", false, { is_dir: true, path: "esphome" });
+  await paint();
+  rules = modules.state.editor.value.ignore_upload;
+  assert.ok(rules.includes("/esphome/"), "unticking folder without catch-all writes /esphome/");
+});
+
 test("logout clears account state and returns to the connect screen", async () => {
   const root = await boot();
   await modules.actions.refresh();
@@ -1113,4 +1144,77 @@ test("every view and overlay renders (settings, wizard steps, diff, dialogs, bus
   await paint();
   assert.match(root.innerHTML, /Something went wrong/);
   modules.state.error.value = null;
+});
+
+test("widescreen brother windows show upload and download side-by-side with separate rule controls", async () => {
+  const levels = {
+    "": { entries: [fileEntry("a.yaml"), fileEntry("b.yaml")] },
+  };
+  const server = previewTreeServer({ levels, root: { files: 2, included: 2, excluded: 0, dirs: 0, complete: true } });
+  const root = await boot({ handlers: { "api/preview_tree": server } });
+  await modules.actions.refresh();
+  modules.actions.startNewMapping();
+  modules.actions.patchEditor({
+    local_path: "homeassistant",
+    ignore_upload: "",
+    ignore_download: "",
+  });
+
+  // Enable side-by-side (brother windows)
+  modules.state.sideBySide.value = true;
+  modules.actions.gotoStep(3);
+  await paint();
+
+  // Verify brother windows container and columns exist
+  const brotherWindows = root.querySelector(".brother-windows");
+  assert.ok(brotherWindows, "brother windows container renders when sideBySide is true");
+  const uploadCol = root.querySelector(".upload-column");
+  const downloadCol = root.querySelector(".download-column");
+  assert.ok(uploadCol, "upload column renders");
+  assert.ok(downloadCol, "download column renders");
+
+  // Check titles in headers
+  assert.match(uploadCol.textContent, /Upload rules & explorer/);
+  assert.match(downloadCol.textContent, /Download rules & explorer/);
+
+  // Uncheck a.yaml on the Upload side
+  const uploadRows = uploadCol.querySelectorAll(".tree-row");
+  const uploadA = [...uploadRows].find((row) => row.textContent.includes("a.yaml"));
+  assert.ok(uploadA, "upload column renders a row for a.yaml");
+  uploadA.querySelector("input").checked = false;
+  uploadA.querySelector("input").dispatchEvent({ type: "change" });
+  await paint();
+
+  assert.match(modules.state.editor.value.ignore_upload, /a\.yaml/, "ticking upload row affects ignore_upload");
+  assert.equal(modules.state.editor.value.ignore_download, "", "ticking upload row leaves ignore_download empty");
+
+  // Apply a preset to the download side
+  const downloadPresetBtn = downloadCol.querySelector(".preset");
+  assert.ok(downloadPresetBtn, "download column has preset chips");
+  downloadPresetBtn.click();
+  await paint();
+
+  assert.match(modules.state.editor.value.ignore_download, /\.storage/, "applying download preset affects ignore_download");
+
+  // Toggle layout back to tabs
+  const tabsBtn = findButton(root, "Tabs");
+  assert.ok(tabsBtn, "view toggle button exists");
+  tabsBtn.click();
+  await paint();
+
+  assert.equal(modules.state.sideBySide.value, false, "clicking tabs toggles sideBySide to false");
+  assert.ok(!root.querySelector(".brother-windows"), "brother windows are replaced by tabbed view");
+});
+
+test("auth setup dialog links to github app installations", async () => {
+  const root = await boot();
+  modules.actions.openAuthSetup();
+  await paint();
+
+  const installationLinks = [...root.querySelectorAll("a")].filter((node) =>
+    (node.getAttribute("href") || "").includes("settings/installations")
+  );
+  assert.ok(installationLinks.length > 0, "dialog links to GitHub App installations");
+  assert.equal(installationLinks[0].getAttribute("href"), "https://github.com/settings/installations");
+  assert.match(installationLinks[0].textContent, /Manage GitHub App installations/);
 });

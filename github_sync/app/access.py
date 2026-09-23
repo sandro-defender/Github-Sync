@@ -33,10 +33,11 @@ def validate_access(value: Any) -> dict[str, Any]:
 def require_access(access: dict[str, Any] | None, repository: str, *, write: bool = False) -> None:
     name = repository_name(repository)
     # Existing installations retain access until the admin chooses restrictions.
-    # An explicit empty list, unlike None, grants access to NO repositories.
+    # An empty or unset repository list grants access to all repositories.
     if access is None:
         return
-    if name not in access["repositories"]:
+    allowed = access.get("repositories")
+    if allowed and name not in allowed:
         raise AccessDenied(f"{name} is not selected in GitHub access settings")
-    if write and access["mode"] != "write":
+    if write and access.get("mode") != "write":
         raise AccessDenied("GitHub access is read-only. Upload is disabled (including automatic uploads).")

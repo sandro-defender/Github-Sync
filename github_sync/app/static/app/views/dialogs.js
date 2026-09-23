@@ -116,6 +116,21 @@ function AuthSetupDialog() {
     </section>
 
     <details class="dialog-section collapse">
+      <summary><${Icon} name="github" size=${15} /> GitHub App installations & repository access</summary>
+      <p class="meta">
+        If you are using a GitHub App or want to install and configure repository access on GitHub,
+        manage your installed repositories directly in GitHub Settings:
+      </p>
+      <div class="row">
+        <a class="btn ghost sm" href="https://github.com/settings/installations" target="_blank" rel="noopener noreferrer">
+          <${Icon} name="github" size=${15} />
+          <span class="btn-label">Manage GitHub App installations</span>
+          <${Icon} name="external" size=${14} />
+        </a>
+      </div>
+    </details>
+
+    <details class="dialog-section collapse">
       <summary><${Icon} name="lock" size=${15} /> Use a fine-grained token instead (GitHub-enforced limits)</summary>
       <p class="meta">
         Create the token at GitHub → Settings → Developer settings → Fine-grained tokens: pick the resource owner, <strong>Only select repositories</strong>,

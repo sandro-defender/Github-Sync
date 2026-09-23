@@ -133,7 +133,7 @@ class GithubClient:
             if len(batch) < 100:
                 break
             page += 1
-        if self.access is not None:
+        if self.access is not None and self.access.get("repositories"):
             allowed = set(self.access["repositories"])
             items = [repo for repo in items if (repo.get("full_name") or "").lower() in allowed]
         return items
