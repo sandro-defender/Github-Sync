@@ -153,9 +153,17 @@ async def supervisor_update_state(session: ClientSession, token: str) -> dict[st
     }
 
 
-async def github_update_state(session: ClientSession) -> dict[str, Any] | None:
-    """Fallback check against the public GitHub release of this app's repo."""
-    latest = await _get_json(session, f"https://api.github.com/repos/{APP_REPO}/releases/latest")
+async def github_update_state(
+    session: ClientSession, token: str | None = None, repo: str | None = None
+) -> dict[str, Any] | None:
+    """Check against the public GitHub release of this app's repo."""
+    target_repo = repo or APP_REPO
+    headers = {"Accept": "application/vnd.github+json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    latest = await _get_json(
+        session, f"https://api.github.com/repos/{target_repo}/releases/latest", headers=headers
+    )
     version = version_label(latest.get("tag_name") if isinstance(latest, dict) else None)
     if not version:
         return None
@@ -311,33 +319,57 @@ class UpdateChecker:
             state["warning"] = None
             token = supervisor_token()
             state["supervisor"] = bool(token)
-            checked = False
+            sv_result: dict[str, Any] | None = None
+            gh_result: dict[str, Any] | None = None
+
             if token:
+                if force:
+                    try:
+                        await _post(self.session, f"{SUPERVISOR_API}/store/reload", _auth_headers(token))
+                    except Exception as err:
+                        _LOGGER.debug("Supervisor store reload failed (continuing check): %s", err)
                 try:
-                    result = await supervisor_update_state(self.session, token)
-                    if result is not None:
-                        state.update(result)
-                        checked = True
+                    sv_result = await supervisor_update_state(self.session, token)
                 except (ClientError, TimeoutError, UpdateError) as err:
                     state["error"] = f"Supervisor update check failed: {err}"
                     _LOGGER.debug("Supervisor update check failed: %s", err)
-            if not checked:
-                try:
-                    result = await github_update_state(self.session)
-                    if result is not None:
-                        state.update(result)
-                        checked = True
-                except (ClientError, TimeoutError, UpdateError) as err:
+
+            try:
+                gh_token = self.store.data.get("access_token") or None
+                gh_result = await github_update_state(self.session, token=gh_token)
+            except (ClientError, TimeoutError, UpdateError) as err:
+                _LOGGER.debug("GitHub update check failed: %s", err)
+                if not sv_result:
                     state["error"] = (state.get("error") or "Update check failed") + f" ({err})"
-                    _LOGGER.debug("GitHub update check failed: %s", err)
+
+            if sv_result and gh_result:
+                # If GitHub has a newer release that Supervisor hasn't cached yet, prefer GitHub
+                if newer(gh_result.get("latest_version"), sv_result.get("latest_version")):
+                    curr = sv_result.get("current_version") or state.get("current_version") or __version__
+                    state.update(gh_result)
+                    state["current_version"] = curr
+                else:
+                    state.update(sv_result)
+            elif sv_result:
+                state.update(sv_result)
+            elif gh_result:
+                state.update(gh_result)
+
+            checked = bool(sv_result or gh_result)
             if checked:
-                # A successful fallback is useful information, not a failed check.
-                state["warning"] = state.get("error")
+                state["warning"] = state.get("error") if gh_result and not sv_result and token else None
                 state["error"] = None
+                latest = state.get("latest_version")
+                current = state.get("current_version") or __version__
+                if state.get("source") == "supervisor" and sv_result and isinstance(sv_result.get("update_available"), bool):
+                    state["update_available"] = sv_result["update_available"]
+                else:
+                    state["update_available"] = newer(latest, current)
             else:
                 state["update_available"] = False
-            if not checked and not state.get("error"):
-                state["error"] = "No update source is available."
+                if not state.get("error"):
+                    state["error"] = "No update source is available."
+
             self._state = state
             await self._persist()
             if checked:

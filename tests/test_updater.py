@@ -393,6 +393,31 @@ class CheckerTests(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(state["supervisor"])
         self.assertTrue(state["update_available"])
 
+    async def test_github_newer_than_stale_supervisor(self) -> None:
+        """When Supervisor store cache is stale but GitHub has released a newer version, use GitHub."""
+        os.environ["SUPERVISOR_TOKEN"] = "tok"
+        routes = {
+            SV_SELF_INFO: self_info(version="0.2.1", version_latest="0.2.1"),
+            GH_LATEST: {"tag_name": "v0.2.5"},
+        }
+        _, state, _ = await self._make_checker(routes)
+        self.assertEqual(state["source"], "github")
+        self.assertEqual(state["latest_version"], "0.2.5")
+        self.assertTrue(state["update_available"])
+
+    async def test_force_check_reloads_supervisor_store(self) -> None:
+        os.environ["SUPERVISOR_TOKEN"] = "tok"
+        sv_reload = "http://supervisor/store/reload"
+        routes = {
+            sv_reload: {"result": "ok"},
+            SV_SELF_INFO: self_info(),
+            GH_LATEST: {"tag_name": "v0.2.1"},
+        }
+        checker, state, session = await self._make_checker(routes)
+        await checker.check(force=True)
+        reload_calls = [c for c in session.calls if c["url"] == sv_reload and c["method"] == "POST"]
+        self.assertTrue(len(reload_calls) >= 1)
+
     async def test_all_sources_fail_yields_error(self) -> None:
         os.environ.pop("SUPERVISOR_TOKEN", None)
         routes = {GH_LATEST: ClientConnectionError("boom")}

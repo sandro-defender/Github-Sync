@@ -166,6 +166,11 @@ function TreeRow({ row }) {
     title=${entry.ignored
       ? `Ignored by “${entry.pattern || "a rule"}” — tick to include the whole folder`
       : "Tick to include or ignore everything inside; click the name to open the folder"}
+    onClick=${(ev) => {
+      if (entry.can_open !== false && !ev.target.closest("input, button, a")) {
+        toggleTreeFolder(entry.path);
+      }
+    }}
   >
     <${Caret} entry=${entry} open=${row.open} />
     <${Tickbox} state=${state} label=${label} onChange=${(next) => toggleIgnoredFolder(entry.path, next, entry)} />

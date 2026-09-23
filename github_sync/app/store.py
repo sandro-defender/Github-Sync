@@ -119,6 +119,8 @@ class Store:
             "access": self.data.get("access"),
             "auth_method": self.data.get("auth_method"),
             "requested_scope": self.data.get("requested_scope"),
+            "installation_id": self.data.get("installation_id"),
+            "installation_url": self.data.get("installation_url"),
             "mapping_count": len(self.data.get("mappings") or []),
             "defaults": {
                 "ignore_upload": DEFAULT_IGNORE_UPLOAD,
@@ -209,10 +211,23 @@ class Store:
         ]
         await self.save()
 
-    async def set_token(self, token: str, username: str | None, user_id: Any, *, access: dict[str, Any] | None = None, auth_method: str = "device", requested_scope: str | None = None) -> None:
+    async def set_token(
+        self,
+        token: str,
+        username: str | None,
+        user_id: Any,
+        *,
+        access: dict[str, Any] | None = None,
+        auth_method: str = "device",
+        requested_scope: str | None = None,
+        installation_id: int | None = None,
+        installation_url: str | None = None,
+    ) -> None:
         self.data["access"] = access
         self.data["auth_method"] = auth_method
         self.data["requested_scope"] = requested_scope
+        self.data["installation_id"] = installation_id
+        self.data["installation_url"] = installation_url
         self.data["access_token"] = token
         self.data["api_base"] = GITHUB_API_BASE
         self.data["username"] = username
@@ -223,6 +238,8 @@ class Store:
         self.data["access"] = None
         self.data["auth_method"] = None
         self.data["requested_scope"] = None
+        self.data["installation_id"] = None
+        self.data["installation_url"] = None
         self.data["access_token"] = ""
         self.data["username"] = None
         self.data["user_id"] = None

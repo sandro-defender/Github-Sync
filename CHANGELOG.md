@@ -23,6 +23,13 @@
 
 ## [Unreleased]
 
+### Direct GitHub update checking, repo management button, and explorer fixes
+
+- **Direct GitHub release check on update requests.** Previously, update checks prioritized Supervisor and did not query GitHub when running with a Supervisor token. Because Home Assistant Supervisor caches repository metadata and polls on a multi-hour schedule, clicking "Check for update" reported that the app was already on the latest version even after a new release was published on GitHub. The update checker now queries GitHub releases directly on check, compares against Supervisor, surfaces newer GitHub releases immediately, and triggers Supervisor store reloads (`POST /store/reload`) on forced checks so Supervisor immediately discovers the new release.
+- **Manage repositories button in GitHub settings.** Added a dedicated "Manage repositories" button under Settings → GitHub connection linking to GitHub App installations (`https://github.com/settings/installations` or `https://github.com/settings/installations/{id}`). The backend also queries `GET /user/installations` upon connecting to discover and store installation identifiers automatically.
+- **Save operation mode (read-only / read-write) in GitHub access settings.** Fixed the "Manage access" dialog where buttons were disabled in editing mode and no save button was visible. Users can now easily switch between Read-only and Read & write operation modes and click "Save changes", which persists the access policy and cleanly closes the modal.
+- **File explorer folder toggle and deselect fix.** Fixed an issue where unticking a folder or file under the catch-all `*` rule failed to deselect because `applyFolderToggle` and `applyPathToggle` incorrectly returned the original block containing re-include lines (`!/path`) instead of the filtered lines. Unticking now reliably removes the negation rules and deselects the folder or file. Clicking anywhere across a folder row now toggles the folder, and directory scanning descends into folders whenever any descendant path is requested in `wanted`.
+
 ### File explorer: a real folder tree instead of a flat preview
 
 The mapping wizard's file selection was a flat list of the *first* included files, with everything else folded into "… and N more" rows you could not tick. Two things broke because of that: files past the cap could not be unchecked, and "Uncheck all" was disabled (it required every file to be checked, which a truncated list could never prove), so the bulk uncheck button looked dead. The preview is now a file explorer that walks the folder as deep as you open it.

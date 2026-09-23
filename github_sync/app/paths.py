@@ -413,7 +413,7 @@ def collect_tree(
             ignored = matcher.is_ignored(child_rel, is_dir)
             pattern = matcher.matching_pattern(child_rel, is_dir) if ignored else None
             if is_dir:
-                opened = child_rel in wanted
+                opened = child_rel in wanted or any(w.startswith(f"{child_rel}/") for w in wanted)
                 # "Expand all": keep opening folders while the caller's depth
                 # budget lasts, folders that are ignored included — under a
                 # catch-all rule that is exactly when they need to be reachable.

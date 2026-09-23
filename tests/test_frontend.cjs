@@ -915,6 +915,75 @@ test("settings links to the GitHub page that manages repository access", async (
   );
   assert.ok(tokenLink, "token connections link to the fine-grained token page");
   assert.match(tokenLink.textContent, /Add or remove repositories on GitHub/);
+
+  const manageLink = [...root.querySelectorAll("a")].find((node) =>
+    (node.getAttribute("href") || "").includes("installations")
+  );
+  assert.ok(manageLink, "settings links to GitHub installations to manage repositories");
+  assert.equal(manageLink.getAttribute("href"), "https://github.com/settings/installations");
+  assert.match(manageLink.textContent, /Manage repositories/);
+});
+
+test("changing github operation mode saves and updates access limits", async () => {
+  const root = await boot({
+    handlers: {
+      "api/access": (body) => ({ ...STATUS, access: body }),
+    },
+  });
+  await modules.actions.refresh();
+
+  // Open Manage access dialog in editing mode
+  modules.actions.openAuthSetup(true);
+  await paint();
+  assert.equal(modules.state.authSetup.value.editing, true);
+  assert.match(root.innerHTML, /Operation mode/);
+  assert.match(root.innerHTML, /Save changes/);
+
+  // Switch mode to read
+  const readRadio = [...root.querySelectorAll("input")].find((r) => r.getAttribute("value") === "read" || r.value === "read");
+  assert.ok(readRadio);
+  readRadio.checked = true;
+  readRadio.dispatchEvent({ type: "change" });
+  await paint();
+
+  // Click Save changes button
+  const saveBtn = findButton(root, "Save changes");
+  assert.ok(saveBtn, "Save changes button is present");
+  saveBtn.click();
+  await paint();
+
+  const accessCall = calls.find((c) => c.url === "api/access" && c.method === "POST");
+  assert.ok(accessCall, "api/access was called");
+  assert.equal(accessCall.body.mode, "read");
+  assert.equal(modules.state.authSetup.value, null, "dialog closed after saving");
+});
+
+test("deselecting folder and file under catch-all removes re-include rules", async () => {
+  await boot();
+  modules.actions.startNewMapping();
+  modules.actions.patchEditor({
+    local_path: "homeassistant",
+    ignore_upload: "# GitHub Sync selection — the file explorer edits the lines below\n*\n!/myfolder/\n!/myfolder/**\n",
+  });
+  modules.state.ignoreSide.value = "upload";
+
+  // Untick myfolder under *
+  modules.actions.toggleIgnoredFolder("myfolder", false, { is_dir: true, path: "myfolder" });
+  await paint();
+  const rules = modules.state.editor.value.ignore_upload;
+  assert.ok(!rules.includes("!/myfolder/"), "re-include rule is removed when unticking folder");
+  assert.ok(!rules.includes("!/myfolder/**"), "re-include glob is removed when unticking folder");
+  assert.match(rules, /(^|\n)\*(\n|$)/, "catch-all * rule remains intact");
+
+  // Re-include a file
+  modules.actions.toggleIgnoredPath("myfolder/file.txt", true, { is_dir: false, path: "myfolder/file.txt", ignored: true, pattern: "*" });
+  await paint();
+  assert.ok(modules.state.editor.value.ignore_upload.includes("!/myfolder/file.txt"));
+
+  // Untick the file
+  modules.actions.toggleIgnoredPath("myfolder/file.txt", false, { is_dir: false, path: "myfolder/file.txt" });
+  await paint();
+  assert.ok(!modules.state.editor.value.ignore_upload.includes("!/myfolder/file.txt"), "file re-include removed on untick");
 });
 
 test("logout clears account state and returns to the connect screen", async () => {

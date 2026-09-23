@@ -83,6 +83,11 @@ function GitHubCard() {
               <${Icon} name="github" size=${15} />
               <span class="btn-label">${repoSettings.label}</span>
               <${Icon} name="external" size=${14} />
+            </a>
+            <a class="btn ghost sm" href=${info.installation_url || (info.installation_id ? `https://github.com/settings/installations/${info.installation_id}` : "https://github.com/settings/installations")} target="_blank" rel="noopener noreferrer">
+              <${Icon} name="github" size=${15} />
+              <span class="btn-label">Manage repositories</span>
+              <${Icon} name="external" size=${14} />
             </a>`
         : html`<${Button} icon="github" onClick=${() => openAuthSetup()}>Connect GitHub</${Button}>`}
     </div>

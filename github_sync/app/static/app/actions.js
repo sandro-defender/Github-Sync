@@ -416,7 +416,7 @@ function applyPathToggle(text, path, included, entry = null) {
     const chain = includeChain(path).filter((line) => !kept.includes(line) && !own.includes(line.trim()));
     return joinRules(own, [...kept, ...chain]);
   }
-  if (block.includes(EXCLUDE_ALL)) return joinRules(own, block); // the catch-all already ignores it
+  if (block.includes(EXCLUDE_ALL)) return joinRules(own, kept); // removing re-includes deselects under catch-all
   if (onlyReincluded(block, matches)) return joinRules(own, kept);
   return joinRules(own, [...kept, path]);
 }
@@ -444,7 +444,7 @@ function applyFolderToggle(text, folder, included, entry = null) {
     const chain = folderChain(folder).filter((line) => !kept.includes(line) && !own.includes(line.trim()));
     return joinRules(own, [...kept, ...chain]);
   }
-  if (block.includes(EXCLUDE_ALL)) return joinRules(own, block);
+  if (block.includes(EXCLUDE_ALL)) return joinRules(own, kept); // removing re-includes deselects under catch-all
   if (onlyReincluded(block, matches)) return joinRules(own, kept);
   return joinRules(own, [...kept, `/${folder}/`]);
 }
@@ -852,7 +852,9 @@ export async function saveAccess() {
     status.value = await run("Saving access limits…", () =>
       api("api/access", { method: "POST", body: selectedAccess() })
     );
+    authSetup.value = null;
     resetAccountState();
+    await refresh();
     pushToast("GitHub access limits saved", "success");
   } catch (_err) {
     /* stored in `error` */

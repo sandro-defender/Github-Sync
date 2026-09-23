@@ -108,8 +108,10 @@ function AuthSetupDialog() {
         The chosen OAuth scope is what GitHub grants. This app additionally enforces the mode and allowlist above, but the grant itself is not narrowed by it.
       </${Banner}>
       <div class="row">
-        <${Button} icon="github" onClick=${startDeviceAuth} disabled=${draft.editing}>Authorise with device code</${Button}>
-        <${Button} variant="ghost" onClick=${() => (authSetup.value = null)} disabled=${draft.editing}>Cancel</${Button}>
+        ${draft.editing
+          ? html`<${Button} variant="ok" icon="check" onClick=${saveAccess}>Save changes</${Button}>`
+          : html`<${Button} icon="github" onClick=${startDeviceAuth}>Authorise with device code</${Button}>`}
+        <${Button} variant="ghost" onClick=${() => (authSetup.value = null)}>Cancel</${Button}>
       </div>
     </section>
 

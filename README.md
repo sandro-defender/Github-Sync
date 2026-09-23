@@ -51,9 +51,9 @@ For **GitHub-enforced repository and permission restrictions**, expand **Restric
 
 The GitHub token must independently grant the requested access. Widening app limits cannot add rights to a token. Device login uses the public GitHub CLI OAuth client ID; client IDs are not secrets and device flow needs no client secret. Temporary device codes stay in server memory. Tokens stay in `/data` and are never returned by the API, including status and sign-in responses.
 
-Signed in, use **Settings → Repository & write access** to change the app limits. They apply to existing mappings on their next operation, including auto-sync. Existing connections retain legacy unrestricted access until you choose limits, so upgrades do not silently break scheduled syncs. Switch account starts a new access selection and clears cached repository lists after successful sign-in.
+Signed in, use **Settings → Manage access** to change operation mode (read-only vs read & write) and app limits. They apply to existing mappings on their next operation, including auto-sync. Settings also includes a direct **Manage repositories** button linking to GitHub App installations (`https://github.com/settings/installations`), as well as authorization review links on GitHub. Existing connections retain legacy unrestricted access until you choose limits, so upgrades do not silently break scheduled syncs. Switch account starts a new access selection and clears cached repository lists after successful sign-in.
 
-**Log out** removes this app's saved token and access policy; it does not revoke the token on GitHub. To narrow or revoke the underlying grant, use GitHub **Settings → Applications** (OAuth) or **Developer settings → Personal access tokens** (fine-grained tokens).
+**Log out** removes this app's saved token and access policy; it does not revoke the token on GitHub. To narrow or revoke the underlying grant, use the **Manage repositories** button (installations), GitHub **Settings → Applications** (OAuth), or **Developer settings → Personal access tokens** (fine-grained tokens).
 
 ## Installation
 
@@ -148,7 +148,7 @@ GitHub Sync checks for a newer version of **itself** in the background (every 30
 - **Update now** — installs the new version immediately. The app finds its own Home Assistant update entity (hassio integration) and calls the `update/install` service; Home Assistant then redownloads the image through the App store and restarts the app. The sidebar briefly disconnects and comes back on its own, then shows the new version in the header.
 - When an update is available, the app also raises a Home Assistant persistent notification (once per version).
 
-Update sources: the Supervisor App store (`http://supervisor/addons/self/info`, **not** `/api/addons/self/info`), falling back to public GitHub releases when Supervisor is unavailable or during local development. The self endpoint needs no additional Supervisor role. Successful fallbacks show a warning rather than a failed-check error; one-click install is offered only for a Supervisor-confirmed update. Errors clear on a successful retry.
+Update sources: the check queries both Home Assistant Supervisor (`http://supervisor/addons/self/info`) and GitHub releases (`https://api.github.com/repos/sandro-defender/Github-Sync/releases/latest`). Forced checks trigger a Supervisor store reload (`POST /store/reload`) and compare GitHub releases directly with Supervisor's cached state, so new GitHub releases are surfaced immediately instead of waiting for Supervisor's periodic store poll. The self endpoint needs no additional Supervisor role. Successful fallbacks show a warning rather than a failed-check error; one-click install is offered once Supervisor discovers the update. Errors clear on a successful retry.
 
 Note: the Supervisor intentionally forbids an app from updating *itself* directly (`App github_sync can't update itself!`), which is why the one-click update goes through Home Assistant's update entity. On very old Home Assistant versions without the update entity, the app tells you to update from **Settings → Apps** instead.
 
