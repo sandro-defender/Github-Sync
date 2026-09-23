@@ -27,6 +27,11 @@
 
 ## [Unreleased]
 
+### Widescreen brother windows and GitHub App installation options
+
+- **Widescreen brother windows for mapping rules & file explorer.** Step 3 of the mapping editor ("Ignore rules") now displays two side-by-side ("brother") windows/panels on widescreen displays (min-width 960px or toggled via the toolbar): one panel for Upload rules & file explorer (Local → GitHub) and one panel for Download rules & file explorer (GitHub → Local). Each window provides independent preset chips, gitignore pattern editing, re-scanning, and interactive folder tree ticking. A toolbar toggle allows users to switch between side-by-side and single tabbed view at any time on any screen size.
+- **GitHub App installation navigation.** Added GitHub App installation options and direct links (`https://github.com/settings/installations`) in the connection setup dialog (`AuthSetupDialog`) and Settings view (`GitHubCard`), giving users easy access to install or manage GitHub App repositories directly on GitHub alongside OAuth device authorization and fine-grained tokens.
+
 ### File explorer deselect fixes and repository allowlist accessibility
 
 - **Folder and file deselect in file explorer.** Fixed an issue where deselecting a file or subfolder inside a re-included folder (e.g. under `!/folder/**` or `!**`) failed because `applyPathToggle` and `applyFolderToggle` did not add explicit exclusion rules when an ancestor re-include was present in the explorer block. Unticking a file or subfolder covered by an ancestor re-include now appends an explicit exclusion rule (`path` or `/${folder}/`) to outvote the re-include rule. Also fixed unticking a folder without catch-all rules so that it writes an explicit folder exclusion (`/${folder}/`) rather than dropping re-includes and returning to an included/partial state.

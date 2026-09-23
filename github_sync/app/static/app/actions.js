@@ -28,10 +28,13 @@ import {
   pushToast,
   repos,
   resetAccountState,
+  sideBySide,
   status,
   tree,
+  treeDownload,
   treeExpanded,
   treeQuery,
+  treeUpload,
   updating,
   updates,
   userMenuOpen,
@@ -143,6 +146,8 @@ export function patchEditor(patch) {
 /** Reset the file explorer (folder or rules changed, nothing is loaded). */
 export function resetExplorer() {
   tree.value = null;
+  treeUpload.value = null;
+  treeDownload.value = null;
   treeExpanded.value = [];
   treeQuery.value = "";
 }
@@ -224,8 +229,8 @@ export function setIgnoreSide(side) {
   if (ignoreSide.value === side) return;
   ignoreSide.value = side;
   // Which folders are open stays the same, but everything else is side-specific.
-  tree.value = null;
-  refreshExplorer();
+  tree.value = side === "download" ? treeDownload.value : treeUpload.value;
+  refreshExplorer({ side });
 }
 
 /** Current ignore field name for the active side. */
@@ -234,15 +239,15 @@ export function ignoreField(side = ignoreSide.value) {
 }
 
 /** Add a preset pattern block to the active ignore side. */
-export function applyPreset(key) {
+export function applyPreset(key, side = ignoreSide.value) {
   const preset = presets.value?.[key];
   const draft = editor.value;
   if (!preset || !draft) return;
-  const field = ignoreField();
+  const field = ignoreField(side);
   const current = draft[field] || "";
   if (current.includes(preset.patterns.trim())) return;
   patchEditor({ [field]: `${current.trim()}\n# ${preset.label}\n${preset.patterns}`.trim() + "\n" });
-  refreshExplorer();
+  refreshExplorer({ side });
 }
 
 /**
@@ -484,8 +489,8 @@ function applyFolderToggle(text, folder, included, entry = null) {
  * the window it currently shows (so a keystroke does not collapse a folder
  * that was paged open) — and one page of headroom for "Show more".
  */
-function explorerLevels(overrides = {}) {
-  const loaded = (tree.value && tree.value.levels) || {};
+function explorerLevels(overrides = {}, targetTree = null) {
+  const loaded = (targetTree && targetTree.levels) || (tree.value && tree.value.levels) || {};
   const paths = ["", ...(treeExpanded.value || [])].filter(
     (path, index, all) => all.indexOf(path) === index
   );
@@ -501,24 +506,20 @@ function explorerLevels(overrides = {}) {
   });
 }
 
-/**
- * Load the file explorer for the active side (folder tree + counts).
- *
- * `options.depth` auto-opens folders below the ones already expanded
- * ("Expand all"), `options.pages` requests a different window for one folder
- * ("Show more"), and `options.append` merges that page into what is shown
- * instead of replacing it.
- */
-export async function refreshExplorer(options = {}) {
+/** Load one side of the file explorer. */
+async function refreshExplorerSide(side, options = {}) {
   const draft = editor.value;
   if (!draft?.local_path) return;
-  const side = ignoreSide.value;
   const field = ignoreField(side);
-  const previous = tree.value || {};
+  const targetSignal = side === "download" ? treeDownload : treeUpload;
+  const previous = targetSignal.value || (ignoreSide.value === side ? tree.value : null) || {};
   const request = ++explorerSeq;
-  const levels = explorerLevels(options.pages);
+  const levels = explorerLevels(options.pages, previous);
   const query = String(treeQuery.value || "").trim();
-  tree.value = { ...previous, loading: true, error: null };
+  targetSignal.value = { ...previous, loading: true, error: null };
+  if (ignoreSide.value === side || !tree.value) {
+    tree.value = targetSignal.value;
+  }
   try {
     const data = await api("api/preview_tree", {
       method: "POST",
@@ -531,7 +532,7 @@ export async function refreshExplorer(options = {}) {
         levels,
       },
     });
-    if (request !== explorerSeq) return; // a newer refresh won
+    if (request !== explorerSeq && options.side !== "both" && !sideBySide.value) return;
     const fresh = { ...data.levels };
     // `append` is a *path*, and the mapping folder's path is the empty string,
     // so the check has to be against null and not for truthiness.
@@ -542,22 +543,50 @@ export async function refreshExplorer(options = {}) {
         entries: [...before, ...(fresh[options.append].entries || [])],
       };
     }
-    tree.value = { ...data, levels: fresh, loading: false, error: null };
+    const result = { ...data, levels: fresh, loading: false, error: null };
+    targetSignal.value = result;
+    if (ignoreSide.value === side || !tree.value) {
+      tree.value = result;
+    }
     if (options.expandFromResponse) {
       treeExpanded.value = Object.keys(fresh).filter((path) => path);
     }
+    return result;
   } catch (err) {
-    if (request !== explorerSeq) return;
-    tree.value = { ...previous, loading: false, error: err?.message || String(err) };
+    const errResult = { ...previous, loading: false, error: err?.message || String(err) };
+    targetSignal.value = errResult;
+    if (ignoreSide.value === side || !tree.value) {
+      tree.value = errResult;
+    }
   }
 }
 
+/**
+ * Load the file explorer (folder tree + counts).
+ *
+ * In widescreen two-window view, both upload and download are fetched;
+ * otherwise the active side is fetched.
+ */
+export async function refreshExplorer(options = {}) {
+  const draft = editor.value;
+  if (!draft?.local_path) return;
+  const targetSide = options.side || (sideBySide.value ? "both" : ignoreSide.value);
+  if (targetSide === "both") {
+    await Promise.all([
+      refreshExplorerSide("upload", options),
+      refreshExplorerSide("download", options),
+    ]);
+    return;
+  }
+  await refreshExplorerSide(targetSide, options);
+}
+
 /** Reload the explorer a moment after the last keystroke. */
-export function scheduleExplorerRefresh(delay = EXPLORER_DEBOUNCE) {
+export function scheduleExplorerRefresh(side, delay = EXPLORER_DEBOUNCE) {
   if (explorerTimer) clearTimeout(explorerTimer);
   explorerTimer = setTimeout(() => {
     explorerTimer = null;
-    refreshExplorer();
+    refreshExplorer({ side: typeof side === "string" ? side : undefined });
   }, delay);
 }
 
@@ -568,65 +597,68 @@ export function setExplorerQuery(value) {
 }
 
 /** Open or close one folder in the tree; the first open loads its children. */
-export function toggleTreeFolder(path) {
+export function toggleTreeFolder(path, side = ignoreSide.value) {
   if (!path) return;
   const open = (treeExpanded.value || []).includes(path);
   treeExpanded.value = open
     ? (treeExpanded.value || []).filter((item) => item !== path)
     : [...(treeExpanded.value || []), path];
   if (open) return; // collapsing needs no data, the rows are already known
-  if (tree.value?.levels?.[path]) return; // already loaded (e.g. after Expand all)
-  refreshExplorer();
+  const currentTree = side === "download" ? treeDownload.value : treeUpload.value;
+  if (currentTree?.levels?.[path] || tree.value?.levels?.[path]) return; // already loaded (e.g. after Expand all)
+  refreshExplorer({ side });
 }
 
 /** Open every folder the scan can reach below what is already visible. */
-export function expandAllFolders() {
-  return refreshExplorer({ depth: EXPAND_ALL_DEPTH, expandFromResponse: true });
+export function expandAllFolders(side = ignoreSide.value) {
+  return refreshExplorer({ depth: EXPAND_ALL_DEPTH, expandFromResponse: true, side });
 }
 
 /** Close every folder again. */
-export function collapseAllFolders() {
+export function collapseAllFolders(side = ignoreSide.value) {
   treeExpanded.value = [];
-  return refreshExplorer();
+  return refreshExplorer({ side });
 }
 
 /** Load the next page of one folder's children (huge folders stay reachable). */
-export function showMoreInFolder(path) {
-  const level = tree.value?.levels?.[path];
+export function showMoreInFolder(path, side = ignoreSide.value) {
+  const currentTree = side === "download" ? treeDownload.value : (treeUpload.value || tree.value);
+  const level = currentTree?.levels?.[path];
   return refreshExplorer({
     pages: { [path]: { offset: level ? (level.entries || []).length : 0 } },
     append: path,
+    side,
   });
 }
 
 /* ------------------------------------------------------ explorer checkboxes */
 
 /** Toggle one file row in the file explorer. */
-export function toggleIgnoredPath(path, included, entry = null) {
+export function toggleIgnoredPath(path, included, entry = null, side = ignoreSide.value) {
   const draft = editor.value;
   if (!draft || !path) return;
-  const field = ignoreField();
+  const field = ignoreField(side);
   const next = applyPathToggle(draft[field] || "", path, included, entry);
   if (next === (draft[field] || "")) {
-    refreshExplorer();
+    refreshExplorer({ side });
     return;
   }
   patchEditor({ [field]: next });
-  refreshExplorer();
+  refreshExplorer({ side });
 }
 
 /** Toggle one folder row (and with it everything inside, listed or not). */
-export function toggleIgnoredFolder(path, included, entry = null) {
+export function toggleIgnoredFolder(path, included, entry = null, side = ignoreSide.value) {
   const draft = editor.value;
   if (!draft || !path) return;
-  const field = ignoreField();
+  const field = ignoreField(side);
   const next = applyFolderToggle(draft[field] || "", path, included, entry);
   if (next === (draft[field] || "")) {
-    refreshExplorer();
+    refreshExplorer({ side });
     return;
   }
   patchEditor({ [field]: next });
-  refreshExplorer();
+  refreshExplorer({ side });
 }
 
 /**
@@ -639,10 +671,10 @@ export function toggleIgnoredFolder(path, included, entry = null) {
  * rules stay in the text above the block; deleting the `*` / `!**` line — or
  * pressing **Reset selection** — falls back on them.
  */
-export function setAllPaths(included) {
+export function setAllPaths(included, side = ignoreSide.value) {
   const draft = editor.value;
   if (!draft) return;
-  const field = ignoreField();
+  const field = ignoreField(side);
   const { own, block } = splitRules(draft[field] || "");
   const marker = included ? REINCLUDE_ALL : EXCLUDE_ALL;
   if (block.length === 1 && block[0] === marker) {
@@ -652,28 +684,28 @@ export function setAllPaths(included) {
   patchEditor({ [field]: joinRules(own, [marker]) });
   pushToast(
     included
-      ? "All files checked — your own rules above are overridden by !**"
-      : "All files unchecked — tick the folders or files you want to sync",
+      ? `All ${side === "download" ? "download" : "upload"} files checked — your own rules above are overridden by !**`
+      : `All ${side === "download" ? "download" : "upload"} files unchecked — tick the folders or files you want to sync`,
     "success"
   );
-  refreshExplorer();
+  refreshExplorer({ side });
 }
 
 /** "Uncheck all": ignore everything on this side, then tick what to keep. */
-export function uncheckAllPaths() {
-  return setAllPaths(false);
+export function uncheckAllPaths(side = ignoreSide.value) {
+  return setAllPaths(false, side);
 }
 
 /** "Check all": include everything on this side again. */
-export function checkAllPaths() {
-  return setAllPaths(true);
+export function checkAllPaths(side = ignoreSide.value) {
+  return setAllPaths(true, side);
 }
 
 /** Drop every rule the explorer wrote; the user's own rules are untouched. */
-export function resetExplorerRules() {
+export function resetExplorerRules(side = ignoreSide.value) {
   const draft = editor.value;
   if (!draft) return;
-  const field = ignoreField();
+  const field = ignoreField(side);
   const { own, block } = splitRules(draft[field] || "");
   if (!block.length) {
     pushToast("The explorer has not written any rules on this side", "info");
@@ -681,7 +713,7 @@ export function resetExplorerRules() {
   }
   patchEditor({ [field]: joinRules(own, []) });
   pushToast("Selection cleared — your own rules are unchanged", "success");
-  refreshExplorer();
+  refreshExplorer({ side });
 }
 
 /** Persist the wizard draft. */

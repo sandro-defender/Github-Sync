@@ -18,9 +18,10 @@ Requires **Home Assistant OS** or **Supervised**. Container and Core installs do
 - Clickable `@username` in the header opens the GitHub menu (options, switch account, log out).
 - File browser over Supervisor mounts (`homeassistant`, `share`, `media`, `backup`, `addons`, `addon_configs`).
 - Search repositories the token can access, or type `owner/name`.
-- Separate **upload ignore** and **download ignore** lists (gitignore syntax).
+- Separate **upload ignore** and **download ignore** lists (gitignore syntax), with **widescreen brother windows**: on widescreen displays (or toggled on/off in the toolbar), Step 3 shows two side-by-side windows for Upload and Download rules & file explorers.
 - Presets for Home Assistant secrets, databases, logs, Python, Node, and ESPHome.
 - **File explorer** on the ignore-rules step: the mapped folder as a real tree — open any folder, tick or untick any file *and* any folder, per upload or download side. A folder tick covers everything inside it (files that are still being scanned included), a partly selected folder shows a dash, and the matching gitignore rules (`/logs/`, `!/logs/**`, `*`) are written for you. Nothing hides behind a cut-off list: long levels page with **Show more**, `Expand all` opens the whole tree, and the filter searches the folder, not just what is open.
+- Manage **GitHub App installations**: easily navigate to installed repositories on GitHub (`https://github.com/settings/installations`) directly from Settings and the connection dialog.
 - Check for updates: compare git blob hashes. Nothing is written.
 - Upload: commit the folder to the mapped branch (creates the first commit if empty).
 - Download: write remote files onto disk. Extra local files are kept unless you opt into deletion.

@@ -35,6 +35,14 @@ export const ignoreSide = signal("upload");
  * one small request instead of shipping the whole tree.
  */
 export const tree = signal(null);
+/** File explorer state for the upload side in two-window view. */
+export const treeUpload = signal(null);
+/** File explorer state for the download side in two-window view. */
+export const treeDownload = signal(null);
+/** Widescreen two-window mode: show both upload and download brother windows. */
+export const sideBySide = signal(
+  typeof window !== "undefined" && typeof window.innerWidth === "number" ? window.innerWidth >= 1000 : false
+);
 /** Folder paths the user opened in the file explorer. */
 export const treeExpanded = signal([]);
 /** Filter box of the file explorer (searches the whole folder). */
@@ -151,6 +159,8 @@ export function resetAccountState() {
   branches.value = [];
   repoQuery.value = "";
   tree.value = null;
+  treeUpload.value = null;
+  treeDownload.value = null;
   treeExpanded.value = [];
   treeQuery.value = "";
   browser.value = null;

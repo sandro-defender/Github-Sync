@@ -1028,3 +1028,67 @@ td.path { max-width: 460px; overflow: hidden; text-overflow: ellipsis; white-spa
   .mapping-head { padding: 14px 14px 0; }
   .card-body { padding: 12px 14px 14px; }
 }
+
+/* -------------------------------------------------------- brother windows */
+
+.brother-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 2px 0 6px;
+}
+.brother-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.brother-view-toggle {
+  margin-left: auto;
+}
+.brother-windows {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+  align-items: start;
+}
+.brother-column {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.brother-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.brother-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.brother-title h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+@media (min-width: 1200px) {
+  .page {
+    max-width: 1440px;
+  }
+}
+
+@media (max-width: 959px) {
+  .brother-windows {
+    grid-template-columns: 1fr;
+  }
+}

@@ -16,7 +16,7 @@ import {
   setIgnoreSide,
 } from "../actions.js";
 import { directionLabel, intervalLabel, matchesQuery } from "../format.js";
-import { branches, browser, editor, ignoreSide, presets, repoQuery, repos, status, tree } from "../state.js";
+import { branches, browser, editor, ignoreSide, presets, repoQuery, repos, sideBySide, status, tree, treeDownload, treeUpload } from "../state.js";
 import { Badge, Banner, Button, Card, Field, Icon, Spinner, Switch } from "../ui.js";
 import { FileExplorer } from "./explorer.js";
 
@@ -196,58 +196,127 @@ export function RepoStep({ draft }) {
 
 /** Step 3 — ignore rules, edited with the live file explorer next to them. */
 export function IgnoreStep({ draft }) {
+  const isSideBySide = Boolean(sideBySide.value);
   const side = ignoreSide.value;
-  const field = side === "download" ? "ignore_download" : "ignore_upload";
   const presetList = Object.entries(presets.value || {});
-  return html`<div class="stack">
-    <${Card}
-      title="Ignore rules"
-      subtitle="Gitignore syntax: globs, **, trailing / for folders, ! to re-include"
-      icon="sliders"
-    >
-      <div class="segmented">
-        <button type="button" class=${side === "upload" ? "active" : ""} onClick=${() => setIgnoreSide("upload")}>Upload</button>
-        <button type="button" class=${side === "download" ? "active" : ""} onClick=${() => setIgnoreSide("download")}>Download</button>
-      </div>
-      <div class="chips">
-        ${presetList.map(
-          (item) => html`<button
-            type="button"
-            class="chip preset"
-            key=${item[0]}
-            title=${item[1].patterns}
-            onClick=${() => applyPreset(item[0])}
-          >
-            <${Icon} name="plus" size=${13} /> ${item[1].label}
-          </button>`
-        )}
-      </div>
-      <${Field}
-        label=${side === "download" ? "Download ignore patterns" : "Upload ignore patterns"}
-        hint="The explorer writes its own lines at the end of this list, after its marker comment — delete that block to start over."
-      >
-        <textarea
-          class="mono"
-          spellcheck="false"
-          value=${draft[field] || ""}
-          onInput=${(ev) => {
-            patchEditor({ [field]: ev.target.value });
-            scheduleExplorerRefresh();
-          }}
-          onBlur=${() => refreshExplorer()}
-        />
-      </${Field}>
-      <div class="row">
-        <${Button} variant="ghost" icon="refresh" onClick=${() => refreshExplorer()}>Re-scan folder</${Button}>
-        ${tree.value?.truncated ? html`<${Badge} tone="warning" icon="warning">scan limit</${Badge}>` : null}
-      </div>
-    </${Card}>
 
-    ${draft.local_path
-      ? html`<${FileExplorer} />`
-      : html`<${Card} title="File explorer" icon="folder">
-          <p class="meta">Choose a folder in step 1 and the explorer lists it here, with a checkbox on every file and folder.</p>
-        </${Card}>`}
+  const renderSidePanel = (targetSide) => {
+    const isUpload = targetSide === "upload";
+    const targetField = isUpload ? "ignore_upload" : "ignore_download";
+    const targetTree =
+      isUpload
+        ? treeUpload.value || (ignoreSide.value === "upload" ? tree.value : null)
+        : treeDownload.value || (ignoreSide.value === "download" ? tree.value : null);
+
+    return html`<div class=${`brother-column ${isUpload ? "upload-column" : "download-column"}`}>
+      ${isSideBySide
+        ? html`<div class="brother-header">
+            <div class="brother-title">
+              <${Icon} name=${isUpload ? "upload" : "download"} size=${16} />
+              <h3>${isUpload ? "Upload rules & explorer" : "Download rules & explorer"}</h3>
+            </div>
+            <${Badge} tone=${isUpload ? "accent" : "neutral"}>
+              ${isUpload ? "Local → GitHub" : "GitHub → Local"}
+            </${Badge}>
+          </div>`
+        : null}
+
+      <${Card}
+        title=${isSideBySide ? (isUpload ? "Upload ignore rules" : "Download ignore rules") : "Ignore rules"}
+        subtitle=${isSideBySide
+          ? isUpload
+            ? "Patterns to exclude when pushing changes to GitHub"
+            : "Patterns to protect when pulling changes from GitHub"
+          : "Gitignore syntax: globs, **, trailing / for folders, ! to re-include"}
+        icon="sliders"
+      >
+        <div class="chips">
+          ${presetList.map(
+            (item) => html`<button
+              type="button"
+              class="chip preset"
+              key=${item[0]}
+              title=${item[1].patterns}
+              onClick=${() => applyPreset(item[0], targetSide)}
+            >
+              <${Icon} name="plus" size=${13} /> ${item[1].label}
+            </button>`
+          )}
+        </div>
+        <${Field}
+          label=${isUpload ? "Upload ignore patterns" : "Download ignore patterns"}
+          hint="The explorer writes its own lines at the end of this list, after its marker comment — delete that block to start over."
+        >
+          <textarea
+            class="mono"
+            spellcheck="false"
+            value=${draft[targetField] || ""}
+            onInput=${(ev) => {
+              patchEditor({ [targetField]: ev.target.value });
+              scheduleExplorerRefresh(targetSide);
+            }}
+            onBlur=${() => refreshExplorer({ side: targetSide })}
+          />
+        </${Field}>
+        <div class="row">
+          <${Button} variant="ghost" icon="refresh" onClick=${() => refreshExplorer({ side: targetSide })}>Re-scan folder</${Button}>
+          ${targetTree?.truncated ? html`<${Badge} tone="warning" icon="warning">scan limit</${Badge}>` : null}
+        </div>
+      </${Card}>
+
+      ${draft.local_path
+        ? html`<${FileExplorer} side=${targetSide} />`
+        : html`<${Card} title="File explorer" icon="folder">
+            <p class="meta">Choose a folder in step 1 and the explorer lists it here, with a checkbox on every file and folder.</p>
+          </${Card}>`}
+    </div>`;
+  };
+
+  return html`<div class="stack">
+    <div class="brother-toolbar">
+      <div class="brother-info">
+        <span class="meta">
+          Rules and file tree for synchronizing local files with GitHub.
+        </span>
+      </div>
+      <div class="segmented brother-view-toggle">
+        <button
+          type="button"
+          class=${isSideBySide ? "active" : ""}
+          onClick=${() => {
+            sideBySide.value = true;
+            refreshExplorer({ side: "both" });
+          }}
+          title="Show Upload and Download panels side-by-side"
+        >
+          <${Icon} name="split" size=${13} /> Side-by-side
+        </button>
+        <button
+          type="button"
+          class=${!isSideBySide ? "active" : ""}
+          onClick=${() => {
+            sideBySide.value = false;
+            refreshExplorer({ side: ignoreSide.value });
+          }}
+          title="Show single tabbed panel"
+        >
+          <${Icon} name="layers" size=${13} /> Tabs
+        </button>
+      </div>
+    </div>
+
+    ${isSideBySide
+      ? html`<div class="brother-windows">
+          ${renderSidePanel("upload")}
+          ${renderSidePanel("download")}
+        </div>`
+      : html`<div class="stack">
+          <div class="segmented">
+            <button type="button" class=${side === "upload" ? "active" : ""} onClick=${() => setIgnoreSide("upload")}>Upload</button>
+            <button type="button" class=${side === "download" ? "active" : ""} onClick=${() => setIgnoreSide("download")}>Download</button>
+          </div>
+          ${renderSidePanel(side)}
+        </div>`}
   </div>`;
 }
 

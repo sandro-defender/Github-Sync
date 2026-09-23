@@ -26,7 +26,7 @@ import {
   uncheckAllPaths,
 } from "../actions.js";
 import { bytes, count } from "../format.js";
-import { ignoreSide, tree, treeExpanded, treeQuery } from "../state.js";
+import { ignoreSide, tree, treeDownload, treeExpanded, treeQuery, treeUpload } from "../state.js";
 import { Badge, Banner, Button, Card, Icon, Spinner } from "../ui.js";
 
 /** Row state a checkbox shows: `checked` | `unchecked` | `partial`. */
@@ -123,21 +123,21 @@ function Tickbox({ state, label, onChange }) {
 }
 
 /** The box that opens or closes a folder (also the row's keyboard handle). */
-function Caret({ entry, open }) {
+function Caret({ entry, open, side }) {
   if (entry.can_open === false) return html`<span class="tree-toggle placeholder" aria-hidden="true" />`;
   return html`<button
     type="button"
     class=${`tree-toggle ${open ? "open" : ""}`.trim()}
     aria-label=${`${open ? "Collapse" : "Expand"} ${entry.name}`}
     aria-expanded=${open ? "true" : "false"}
-    onClick=${() => toggleTreeFolder(entry.path)}
+    onClick=${() => toggleTreeFolder(entry.path, side)}
   >
     <${Icon} name=${open ? "chevronDown" : "chevronRight"} size=${14} />
   </button>`;
 }
 
 /** One file or folder row of the tree. */
-function TreeRow({ row }) {
+function TreeRow({ row, side }) {
   const entry = row.entry;
   const state = entryState(entry);
   const indent = `padding-left:${6 + row.depth * 16}px`;
@@ -152,7 +152,7 @@ function TreeRow({ row }) {
       title=${entry.ignored ? `Ignored by “${entry.pattern || "a rule"}” — tick to include this file` : label}
     >
       <span class="tree-toggle placeholder" aria-hidden="true" />
-      <${Tickbox} state=${state} label=${label} onChange=${(next) => toggleIgnoredPath(entry.path, next, entry)} />
+      <${Tickbox} state=${state} label=${label} onChange=${(next) => toggleIgnoredPath(entry.path, next, entry, side)} />
       <${Icon} name="file" size=${14} />
       <span class="grow mono">${entry.name}</span>
       <span class="meta">${fileMeta(entry)}</span>
@@ -168,16 +168,16 @@ function TreeRow({ row }) {
       : "Tick to include or ignore everything inside; click the name to open the folder"}
     onClick=${(ev) => {
       if (entry.can_open !== false && !ev.target.closest("input, button, a")) {
-        toggleTreeFolder(entry.path);
+        toggleTreeFolder(entry.path, side);
       }
     }}
   >
-    <${Caret} entry=${entry} open=${row.open} />
-    <${Tickbox} state=${state} label=${label} onChange=${(next) => toggleIgnoredFolder(entry.path, next, entry)} />
+    <${Caret} entry=${entry} open=${row.open} side=${side} />
+    <${Tickbox} state=${state} label=${label} onChange=${(next) => toggleIgnoredFolder(entry.path, next, entry, side)} />
     <${Icon} name="folder" size=${14} />
     ${entry.can_open === false
       ? html`<span class="grow mono">${entry.name}</span>`
-      : html`<button type="button" class="grow tree-name mono" onClick=${() => toggleTreeFolder(entry.path)}>
+      : html`<button type="button" class="grow tree-name mono" onClick=${() => toggleTreeFolder(entry.path, side)}>
           ${entry.name}
         </button>`}
     ${entry.symlink ? html`<${Badge} tone="neutral">link</${Badge}>` : null}
@@ -193,7 +193,7 @@ function TreeRow({ row }) {
  * row says so and points at the filter instead — the files are still there and
  * still tickable, just not worth scrolling to.
  */
-function MoreRow({ row, loading }) {
+function MoreRow({ row, loading, side }) {
   return html`<div class="tree-more" key=${row.key} style=${`padding-left:${6 + (row.depth + 1) * 16}px`}>
     ${row.capped
       ? html`<${Icon} name="search" size=${13} />
@@ -205,7 +205,7 @@ function MoreRow({ row, loading }) {
           size="sm"
           icon=${loading ? undefined : "chevronDown"}
           disabled=${loading}
-          onClick=${() => showMoreInFolder(row.path)}
+          onClick=${() => showMoreInFolder(row.path, side)}
         >
           ${loading ? html`<${Spinner} size=${13} />` : "Show more"}
         </${Button}>
@@ -218,7 +218,7 @@ function MoreRow({ row, loading }) {
 }
 
 /** A search hit: the full path is shown because the tree stays collapsed. */
-function SearchRow({ entry, index }) {
+function SearchRow({ entry, index, side }) {
   const state = entryState(entry);
   const folder = entry.is_dir && entry.can_open !== false;
   const label = `${state === "partial" ? "Partly included" : state === "checked" ? "Included" : "Ignored"}: ${entry.path}`;
@@ -228,7 +228,7 @@ function SearchRow({ entry, index }) {
       state=${state}
       label=${label}
       onChange=${(next) =>
-        folder ? toggleIgnoredFolder(entry.path, next, entry) : toggleIgnoredPath(entry.path, next, entry)}
+        folder ? toggleIgnoredFolder(entry.path, next, entry, side) : toggleIgnoredPath(entry.path, next, entry, side)}
     />
     <${Icon} name=${folder ? "folder" : "file"} size=${14} />
     <span class="grow mono">${entry.path}</span>
@@ -240,13 +240,14 @@ function SearchRow({ entry, index }) {
 /**
  * The explorer card the mapping wizard shows on its "Ignore rules" step.
  *
- * Upload and download each keep their own rule set, so `ignoreSide` decides
+ * Upload and download each keep their own rule set, so `side` decides
  * which textarea the checkboxes edit; the folder tree itself is the same on
  * disk, so which folders are open survives switching sides.
  */
-export function FileExplorer() {
-  const data = tree.value;
-  const side = ignoreSide.value;
+export function FileExplorer({ side } = {}) {
+  const activeSide = side || ignoreSide.value;
+  const targetSignal = activeSide === "download" ? treeDownload : treeUpload;
+  const data = targetSignal.value || (ignoreSide.value === activeSide ? tree.value : null) || tree.value;
   const query = String(treeQuery.value || "");
   const loading = Boolean(data?.loading);
   const search = data?.search || null;
@@ -263,7 +264,7 @@ export function FileExplorer() {
 
   return html`<${Card}
     title="File explorer"
-    subtitle=${`${side === "download" ? "Download" : "Upload"} — open a folder and tick exactly what to sync`}
+    subtitle=${`${activeSide === "download" ? "Download" : "Upload"} — open a folder and tick exactly what to sync`}
     icon="folder"
     actions=${html`<${Button}
         variant="ghost"
@@ -271,7 +272,7 @@ export function FileExplorer() {
         icon="check"
         title="Include everything on this side (writes !**, which overrides the rules above)"
         disabled=${!canCheck}
-        onClick=${checkAllPaths}
+        onClick=${() => checkAllPaths(activeSide)}
       >Check all</${Button}>
       <${Button}
         variant="ghost"
@@ -279,19 +280,19 @@ export function FileExplorer() {
         icon="close"
         title="Ignore everything on this side, then tick only what to sync (writes one * rule)"
         disabled=${!canUncheck}
-        onClick=${uncheckAllPaths}
+        onClick=${() => uncheckAllPaths(activeSide)}
       >Uncheck all</${Button}>
       <${Button}
         variant="ghost"
         size="sm"
         icon="trash"
         title="Delete the rules the explorer wrote; the rules above stay untouched"
-        onClick=${resetExplorerRules}
+        onClick=${() => resetExplorerRules(activeSide)}
       >Reset selection</${Button}>`}>
     ${data?.error
       ? html`<${Banner} tone="error" icon="warning" title="The folder could not be listed">
           ${data.error}
-          <${Button} variant="ghost" size="sm" icon="refresh" onClick=${() => refreshExplorer()}>Retry</${Button}>
+          <${Button} variant="ghost" size="sm" icon="refresh" onClick=${() => refreshExplorer({ side: activeSide })}>Retry</${Button}>
         </${Banner}>`
       : null}
 
@@ -310,8 +311,8 @@ export function FileExplorer() {
           </button>`
         : null}
       <span class="spacer" />
-      <${Button} variant="ghost" size="sm" icon="chevronDown" onClick=${expandAllFolders}>Expand all</${Button}>
-      <${Button} variant="ghost" size="sm" icon="back" onClick=${collapseAllFolders}>Collapse</${Button}>
+      <${Button} variant="ghost" size="sm" icon="chevronDown" onClick=${() => expandAllFolders(activeSide)}>Expand all</${Button}>
+      <${Button} variant="ghost" size="sm" icon="back" onClick=${() => collapseAllFolders(activeSide)}>Collapse</${Button}>
     </div>
 
     ${data
@@ -344,11 +345,11 @@ export function FileExplorer() {
               </div>`
             : null}
           ${search
-            ? (search.entries || []).map((entry, index) => html`<${SearchRow} entry=${entry} index=${index} />`)
+            ? (search.entries || []).map((entry, index) => html`<${SearchRow} entry=${entry} index=${index} side=${activeSide} />`)
             : rows.map((row) =>
                 row.kind === "more"
-                  ? html`<${MoreRow} row=${row} loading=${loading} />`
-                  : html`<${TreeRow} row=${row} />`
+                  ? html`<${MoreRow} row=${row} loading=${loading} side=${activeSide} />`
+                  : html`<${TreeRow} row=${row} side=${activeSide} />`
               )}
           ${!search && !(data.levels?.[""]?.entries || []).length
             ? html`<div class="list-row muted">This folder has no files to list.</div>`
