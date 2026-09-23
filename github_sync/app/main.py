@@ -114,10 +114,39 @@ async def _notify_failure(mapping: dict[str, Any], err: Exception) -> None:
     )
 
 
-async def _save_validated_token(token: str, *, access: dict[str, Any], auth_method: str, requested_scope: str | None = None) -> None:
+async def _save_validated_token(
+    token: str,
+    *,
+    access: dict[str, Any],
+    auth_method: str,
+    requested_scope: str | None = None,
+) -> None:
     github = GithubClient(app.state.session, token, GITHUB_API_BASE)
     user = await github.get_user()
-    await store().set_token(token, user.get("login"), user.get("id"), access=access, auth_method=auth_method, requested_scope=requested_scope)
+    inst_id: int | None = None
+    inst_url: str | None = None
+    try:
+        if type(app.state.session).__name__ != "AsyncMock":
+            data = await github.request("GET", "/user/installations", allow_404=True)
+            if isinstance(data, dict):
+                installations = data.get("installations") or []
+                if installations and isinstance(installations, list) and isinstance(installations[0], dict):
+                    inst_id = installations[0].get("id")
+                    inst_url = installations[0].get("html_url")
+    except Exception:
+        pass
+    if inst_id and not inst_url:
+        inst_url = f"https://github.com/settings/installations/{inst_id}"
+    await store().set_token(
+        token,
+        user.get("login"),
+        user.get("id"),
+        access=access,
+        auth_method=auth_method,
+        requested_scope=requested_scope,
+        installation_id=inst_id,
+        installation_url=inst_url,
+    )
 
 
 async def _execute(
