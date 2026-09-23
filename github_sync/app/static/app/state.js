@@ -26,8 +26,19 @@ export const view = signal("list");
 export const editor = signal(null);
 /** Ignore editor side: `upload` | `download`. */
 export const ignoreSide = signal("upload");
-/** `api/preview_ignore` result for the ignore editor. */
-export const preview = signal(null);
+/**
+ * File explorer state for the ignore editor (`api/preview_tree`).
+ *
+ * `{ root, levels, search, truncated, scanned, loading, error }` where `levels`
+ * maps a folder path (`""` is the mapping root) to the page of children the
+ * last request returned. Only loaded levels are kept, so expanding a folder is
+ * one small request instead of shipping the whole tree.
+ */
+export const tree = signal(null);
+/** Folder paths the user opened in the file explorer. */
+export const treeExpanded = signal([]);
+/** Filter box of the file explorer (searches the whole folder). */
+export const treeQuery = signal("");
 /** File browser result for the wizard's folder step. */
 export const browser = signal(null);
 /** Repository list (or `null` before it was loaded). */
@@ -139,7 +150,9 @@ export function resetAccountState() {
   repos.value = null;
   branches.value = [];
   repoQuery.value = "";
-  preview.value = null;
+  tree.value = null;
+  treeExpanded.value = [];
+  treeQuery.value = "";
   browser.value = null;
   diff.value = null;
   confirm.value = null;

@@ -18,7 +18,14 @@ from github_client import GithubAPIError, GithubAuthError, GithubClient
 from ha import notify_ha
 from ignore import IgnoreMatcher
 from oauth import GITHUB_API_BASE, OAuthBroker, OAuthError
-from paths import PathError, browse_directory, collect_files, discover_roots, resolve_under_roots
+from paths import (
+    PathError,
+    browse_directory,
+    collect_files,
+    collect_tree,
+    discover_roots,
+    resolve_under_roots,
+)
 from progress import ProgressHub
 from scheduler import Scheduler
 from store import IGNORE_PRESETS, Store
@@ -347,6 +354,11 @@ async def browse(path: str = "") -> dict[str, Any]:
 
 @app.post("/api/preview_ignore")
 async def preview_ignore(body: dict[str, Any]) -> dict[str, Any]:
+    """Flat include/exclude lists (capped) — kept as the simple preview API.
+
+    The UI reads `api/preview_tree` instead, which answers one folder level per
+    request and therefore never hides files behind these caps.
+    """
     local_path = body.get("local_path") or ""
     resolve_under_roots(roots(), local_path)
     matcher = IgnoreMatcher(body.get("ignore") or "")
@@ -363,6 +375,33 @@ async def preview_ignore(body: dict[str, Any]) -> dict[str, Any]:
         "included_size": sum(int(item.get("size") or 0) for item in included),
         "truncated": truncated,
     }
+
+
+@app.post("/api/preview_tree")
+async def preview_tree(body: dict[str, Any]) -> dict[str, Any]:
+    """File-explorer tree: one folder level at a time, with rollups.
+
+    The mapping wizard uses this instead of `api/preview_ignore`: rows come
+    per directory, so folders expand on click and a huge folder stays fully
+    explorable (its entries are paged instead of being cut off at a global row
+    cap). Every folder entry carries recursive included/excluded counts, which
+    is what lets a collapsed folder show a tri-state checkbox.
+    """
+    local_path = body.get("local_path") or ""
+    resolve_under_roots(roots(), local_path)
+    matcher = IgnoreMatcher(body.get("ignore") or "")
+    result = await asyncio.to_thread(
+        collect_tree,
+        roots(),
+        local_path,
+        matcher,
+        levels=body.get("levels") or None,
+        page_size=body.get("page_size"),
+        query=str(body.get("query") or ""),
+        depth=body.get("depth") or 0,
+    )
+    result["direction"] = body.get("direction") or "upload"
+    return result
 
 
 @app.get("/api/repos")

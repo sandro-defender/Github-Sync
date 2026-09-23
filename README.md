@@ -6,7 +6,7 @@
 
 **Home Assistant App** (formerly add-on) that syncs **any folder** Home Assistant can see — `/config`, `/share`, `/media`, backups, add-on configs — with a GitHub repository.
 
-Each folder can point at a **different repo and branch**. After install, **GitHub Sync** appears in the sidebar (admin users) with a file browser, a smart `.gitignore` editor, and **Check for updates / Upload / Download**.
+Each folder can point at a **different repo and branch**. After install, **GitHub Sync** appears in the sidebar (admin users) with a file browser, a folder-tree editor for the `.gitignore` rules where every file and folder can be ticked, and **Check for updates / Upload / Download**.
 
 This is not a HACS integration and not a git client on the host. The app runs in its own Supervisor container and talks to GitHub over the REST **Git Data API**.
 
@@ -20,7 +20,7 @@ Requires **Home Assistant OS** or **Supervised**. Container and Core installs do
 - Search repositories the token can access, or type `owner/name`.
 - Separate **upload ignore** and **download ignore** lists (gitignore syntax).
 - Presets for Home Assistant secrets, databases, logs, Python, Node, and ESPHome.
-- Live preview of included vs skipped files, with working checkboxes to toggle them — tick/untick per upload or download side, or hit **Uncheck all** and tick just the files you want to sync (the app writes the matching gitignore rules, including `!` re-includes, for you). Files inside a subfolder collapse into one folder row (e.g. everything under `living/` shares a single `living` row, ticked as a group or shown as partially checked), unchecked rows keep readable text (no strikethrough), and **Uncheck all** stays disabled until every file is checked.
+- **File explorer** on the ignore-rules step: the mapped folder as a real tree — open any folder, tick or untick any file *and* any folder, per upload or download side. A folder tick covers everything inside it (files that are still being scanned included), a partly selected folder shows a dash, and the matching gitignore rules (`/logs/`, `!/logs/**`, `*`) are written for you. Nothing hides behind a cut-off list: long levels page with **Show more**, `Expand all` opens the whole tree, and the filter searches the folder, not just what is open.
 - Check for updates: compare git blob hashes. Nothing is written.
 - Upload: commit the folder to the mapped branch (creates the first commit if empty).
 - Download: write remote files onto disk. Extra local files are kept unless you opt into deletion.
@@ -91,7 +91,7 @@ exposed to your network. Pages:
 1. **+ Add folder sync**
 2. **Folder** — browse mounts and select a directory (for example `homeassistant/esphome` or `share/backups`).
 3. **Repository** — pick from the list or type `owner/repo`, set the branch, optionally a path *inside* the repo if the folder should not replace the entire tree.
-4. **Ignore rules** — edit upload vs download gitignore. Use presets, or work from the live **What will be synced** preview: untick a file *or a folder* to exclude it, tick it again to include it (folder rows tick/untick every file inside; a folder with a mix of both shows as partially checked, and one tick completes it). Unchecked rows stay readable — no strikethrough. **Uncheck all** (top-right of the preview) is only enabled while every file is checked: it excludes everything in one click, then you tick back exactly the files or folders you want to sync. The textarea always holds the resulting gitignore rules (ticking a file ignored by a broader pattern adds a `!` re-include line you can edit or delete by hand). Folders ignored by the catch-all `*` rule keep their files visible so every file stays selectable; always-ignored folders (`.git`) are hidden from the list.
+4. **Ignore rules** — edit upload vs download gitignore with presets, or drive the **file explorer** below the textarea: the mapped folder as a tree, one row per file and per folder at any depth. Click a name to open a folder, tick a file to include or ignore it, tick a folder to do the same to *everything* inside it — including files the scan has not listed yet. A folder with a mix shows a dash and one tick completes it. Every rule the explorer writes lands in the textarea (inside a marked block, so your own presets above it are never rewritten): a folder becomes `/logs/`, a re-included path becomes the `!/logs/` + `!/logs/**` chain gitignore needs to reach inside an ignored parent, and you can edit or delete any of those lines by hand — the tree re-reads your rules a moment after the last keystroke. **Uncheck all** excludes the whole side with one `*` rule and **Check all** re-includes it with `!**`, both pressable from any state; **Reset selection** deletes only what the explorer wrote. Nothing is ever hidden because the list got long: levels page with **Show more**, **Expand all** opens the tree, and the filter box searches the whole folder — including inside ignored ones — so a file that is unreachable by scrolling is still one click from being ticked. Always-ignored folders (`.git`) are not listed at all.
 5. **Review** — optional commit message template with `{name}`, `{folder}`, `{repository}`, `{timestamp}`. Enable **automatic sync** here if you want the app to run on an interval.
 6. **Save mapping**
 
@@ -216,7 +216,7 @@ github_sync/app/static/
     api.js            fetch wrapper with typed errors
     format.js         pure display helpers
     ui.js             design-system primitives (Icon, Button, Card, Modal, …)
-    views/            app shell, header, mappings, editor wizard, diff, settings, dialogs
+    views/            app shell, header, mappings, editor wizard, file explorer, diff, settings, dialogs
   lib/                vendored ESM runtime (see lib/README.md — no CDN, no build)
 ```
 

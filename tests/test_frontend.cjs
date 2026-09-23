@@ -83,6 +83,10 @@ async function boot(options = {}) {
   globalThis.fetch = async (url, opts = {}) => {
     const body = opts.body ? JSON.parse(opts.body) : null;
     calls.push({ url, method: opts.method || "GET", body });
+    const handler = (options.handlers || {})[url];
+    if (handler) {
+      return { ok: true, status: 200, statusText: "OK", text: async () => JSON.stringify(handler(body) || {}) };
+    }
     if (options.fail && url.startsWith(options.fail)) {
       return { ok: false, status: 400, statusText: "Bad Request", text: async () => JSON.stringify({ detail: "Something broke" }) };
     }
@@ -143,8 +147,109 @@ async function flush() {
   await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-/** Wait for pending signal-driven re-renders. */
+/** Wait for pending signal-driven re-renders *and* Preact effects. */
 const paint = flush;
+
+/**
+ * `paint()` plus a macrotask: Preact queues layout effects one tick after the
+ * diff, and `Tickbox` sets `indeterminate` from an effect, so tests that read
+ * that property have to yield once more.
+ */
+async function settle() {
+  await flush();
+  await new Promise((resolve) => setTimeout(resolve, 25));
+}
+
+/* ------------------------------------------------------- file explorer fake */
+
+/** A file row as `api/preview_tree` returns it. */
+const fileEntry = (path, extra = {}) => ({
+  name: path.split("/").pop(),
+  path,
+  is_dir: false,
+  size: 10,
+  ignored: false,
+  pattern: null,
+  symlink: false,
+  too_large: false,
+  ...extra,
+});
+
+/** A folder row, including its recursive rollup (all files inside included). */
+const dirEntry = (path, extra = {}) => ({
+  name: path.split("/").pop(),
+  path,
+  is_dir: true,
+  size: null,
+  ignored: false,
+  pattern: null,
+  symlink: false,
+  can_open: true,
+  files: 3,
+  included: 3,
+  excluded: 0,
+  dirs: 0,
+  ignored_dirs: 0,
+  included_size: 30,
+  complete: true,
+  unknown: false,
+  ...extra,
+});
+
+/**
+ * Fake `api/preview_tree`: answers *only* the levels a request asks about.
+ *
+ * The real endpoint lists one directory level per requested `levels` entry and
+ * pages it, so a test can prove the app asks for a folder when it opens it,
+ * asks for the next page when it says "Show more", and never renders children
+ * it was not given.
+ */
+function previewTreeServer({ levels, root = {}, search = null, truncated = false, defaultPageSize = 200 } = {}) {
+  const resolve = (value) => (typeof value === "function" ? value() : value);
+  const server = (request = {}) => {
+    const asked = request.levels?.length ? request.levels : [{ path: "", offset: 0 }];
+    const out = {};
+    for (const item of asked) {
+      const level = levels[item.path];
+      if (!level) continue;
+      const entries = typeof level === "function" ? level(request) : level.entries || [];
+      const total = typeof level === "function" ? entries.length : level.total ?? entries.length;
+      const size = Number(item.size) || defaultPageSize;
+      const offset = Math.min(Math.max(0, Number(item.offset) || 0), entries.length);
+      out[item.path] = {
+        path: item.path,
+        offset,
+        page_size: size,
+        total,
+        has_more: offset + size < entries.length,
+        capped: typeof level === "function" ? false : Boolean(level.capped),
+        entries: entries.slice(offset, offset + size),
+      };
+    }
+    const answer = {
+      root: resolve(root) || {},
+      levels: out,
+      truncated: resolve(truncated),
+      scanned: 42,
+      path: "homeassistant",
+      direction: request.direction,
+    };
+    if (search) answer.search = search(String(request.query || ""));
+    return answer;
+  };
+  server.requests = () => calls.filter((call) => call.url === "api/preview_tree");
+  return server;
+}
+
+/** Every rendered explorer row, in document order. */
+function treeRowsOf(root) {
+  return root.querySelectorAll(".tree-row");
+}
+
+/** The row whose text contains `needle` (name or path). */
+function explorerRow(root, needle) {
+  return treeRowsOf(root).find((node) => node.textContent.includes(needle)) || null;
+}
 
 /** Find a button/clickable by its visible text. */
 function findButton(root, text) {
@@ -277,14 +382,23 @@ test("update failures and fallback releases never claim a verified install", asy
   assert.match(root.innerHTML, /update this app from its install source/i);
 });
 
-test("editor wizard walks folder → repo → rules → review and saves one mapping", async () => {
+test("editor wizard walks folder → repo → explorer → review and saves one mapping", async () => {
+  const levels = {
+    "": { entries: [dirEntry("esphome", { files: 2, included: 2, dirs: 1, included_size: 180 }), fileEntry("ui-lovelace.yaml", { size: 40 })] },
+    esphome: { entries: [dirEntry("esphome/living", { files: 1, included: 1, included_size: 60 }), fileEntry("esphome/kitchen.yaml", { size: 120 })] },
+    "esphome/living": { entries: [fileEntry("esphome/living/lights.yaml", { size: 60 })] },
+  };
+  const server = previewTreeServer({
+    levels,
+    root: { files: 4, included: 4, excluded: 0, dirs: 2, ignored_dirs: 0, included_size: 220, complete: true },
+  });
   const root = await boot({
     responses: {
       "api/browse?path=": { path: "", parent: null, root: "Home Assistant", entries: [{ name: "homeassistant", path: "homeassistant", is_dir: true }] },
       "api/repos": { repos: [{ full_name: "owner/ha-esphome", default_branch: "main", private: false, description: "ESPHome config" }] },
       "api/branches?repository=owner%2Fha-esphome": { branches: ["main", "dev"] },
-      "api/preview_ignore": { direction: "upload", included: [{ path: "esphome/kitchen.yaml", size: 120 }], excluded: [], included_count: 1, excluded_count: 0, excluded_file_count: 0, included_size: 120, truncated: false },
     },
+    handlers: { "api/preview_tree": server },
   });
   await modules.actions.refresh();
 
@@ -298,6 +412,7 @@ test("editor wizard walks folder → repo → rules → review and saves one map
   modules.actions.pickFolder("homeassistant");
   await paint();
   assert.equal(modules.state.editor.value.local_path, "homeassistant");
+  assert.equal(modules.state.tree.value, null, "picking a folder drops the previous explorer scan");
 
   modules.actions.gotoStep(2);
   await modules.actions.loadRepos();
@@ -307,16 +422,28 @@ test("editor wizard walks folder → repo → rules → review and saves one map
   await paint();
   assert.deepEqual(modules.state.branches.value, ["main", "dev"]);
 
+  // Step 3 is the file explorer: the mapped folder as a tree, tickable at any depth.
   modules.actions.gotoStep(3);
-  await modules.actions.refreshIgnorePreview();
   await paint();
-  const folderRow = [...root.querySelectorAll("label")].find(
-    (node) => node.classList.contains("list-row") && node.classList.contains("folder")
+  assert.match(root.innerHTML, /File explorer/, "step 3 shows the file explorer");
+  assert.equal(modules.state.tree.value.root.included, 4, "the explorer counted the folder");
+  assert.match(explorerRow(root, "esphome").textContent, /2 files/, "folder rows say what is inside");
+  assert.equal(explorerRow(root, "esphome").querySelector("input").checked, true, "a fully included folder renders checked");
+
+  explorerRow(root, "esphome").querySelector(".tree-name").click();
+  await paint();
+  assert.ok(explorerRow(root, "kitchen.yaml"), "clicking a folder opens it");
+
+  // Unticking a file writes the rule into the explorer's own block…
+  const box = explorerRow(root, "kitchen.yaml").querySelector("input");
+  box.checked = false;
+  box.dispatchEvent({ type: "change" });
+  await paint();
+  assert.match(
+    modules.state.editor.value.ignore_upload,
+    /# GitHub Sync selection[^\n]*\nesphome\/kitchen\.yaml\n$/,
+    "a ticked-off file becomes one exact ignore rule"
   );
-  assert.ok(folderRow, "files inside a folder collapse into a single folder row");
-  assert.match(folderRow.textContent, /esphome/);
-  assert.match(folderRow.textContent, /1 file/);
-  assert.equal(folderRow.querySelector("input").checked, true, "fully included folder renders checked");
 
   modules.actions.gotoStep(4);
   await paint();
@@ -327,6 +454,11 @@ test("editor wizard walks folder → repo → rules → review and saves one map
   assert.equal(saved.body.local_path, "homeassistant");
   assert.equal(saved.body.repository, "owner/ha-esphome");
   assert.equal(saved.body.branch, "main");
+  assert.equal(
+    saved.body.ignore_upload,
+    `.storage/\n${"# GitHub Sync selection — the file explorer edits the lines below"}\nesphome/kitchen.yaml\n`,
+    "the saved mapping keeps the default rules plus the explorer's own block"
+  );
   assert.equal(modules.state.view.value, "list", "wizard returns to the list after saving");
 });
 
@@ -370,248 +502,371 @@ test("rendered files are escaped and the app never injects raw HTML", async () =
   }
 });
 
-test("ignore preview checkboxes uncheck, re-check and chain-negate files", async () => {
-  const preview = {
-    direction: "upload",
-    included: [
-      { path: "a.yaml", size: 10, is_dir: false },
-      { path: "sub/c.yaml", size: 6, is_dir: false },
-    ],
-    excluded: [{ path: "b.log", size: 4, is_dir: false, pattern: "*.log" }],
-    included_count: 2,
-    excluded_count: 1,
-    excluded_file_count: 1,
-    included_size: 16,
-    truncated: false,
+test("file explorer ticks files into the explorer block and back out again", async () => {
+  const levels = {
+    "": { entries: [fileEntry("a.yaml"), fileEntry("b.log", { ignored: true, pattern: "*.log" })] },
   };
-  const root = await boot({ responses: { "api/preview_ignore": preview } });
+  const root = await boot({
+    handlers: {
+      "api/preview_tree": previewTreeServer({ levels, root: { files: 2, included: 1, excluded: 1, dirs: 0 } }),
+    },
+  });
   await modules.actions.refresh();
-  const setPreview = (included, excluded) => {
-    preview.included = included;
-    preview.excluded = excluded;
-    preview.included_count = included.length;
-    preview.excluded_count = excluded.length;
-    preview.excluded_file_count = excluded.filter((item) => !item.is_dir).length;
-    preview.included_size = included.reduce((sum, file) => sum + (file.size || 0), 0);
-  };
 
   modules.actions.startNewMapping();
   modules.state.ignoreSide.value = "upload";
   modules.actions.patchEditor({ local_path: "homeassistant", ignore_upload: "*.log\n" });
   modules.actions.gotoStep(3);
   await paint();
-  assert.match(root.innerHTML, /a\.yaml/);
 
-  const checkboxOf = (name) => {
-    const row = [...root.querySelectorAll("label")].find(
-      (node) => node.classList.contains("list-row") && node.textContent.includes(name)
-    );
-    assert.ok(row, `a checkbox row exists for ${name}`);
-    return { row, input: row.querySelector("input") };
-  };
+  const rules = () => modules.state.editor.value.ignore_upload;
   const toggle = (name, checked) => {
-    const { input } = checkboxOf(name);
+    const row = explorerRow(root, name);
+    assert.ok(row, `the explorer renders a row for ${name}`);
+    const input = row.querySelector("input");
     input.checked = checked;
     input.dispatchEvent({ type: "change" });
   };
-  const rules = () => modules.state.editor.value.ignore_upload;
-  const uncheckAllButton = () => findButton(root, "Uncheck all");
 
-  // "Uncheck all" stays disabled while anything is unchecked.
-  assert.ok(uncheckAllButton(), "preview offers Uncheck all");
-  assert.equal(uncheckAllButton().disabled, true, "b.log is unchecked, so the button is disabled");
+  assert.match(root.innerHTML, /File explorer/, "the wizard step shows the file explorer");
+  assert.equal(rules(), "*.log\n", "nothing is written before the user ticks anything");
 
-  // Unchecking an included file excludes it with an exact rule.
-  assert.equal(checkboxOf("a.yaml").input.checked, true);
+  // Unticking an included file writes one exact rule — inside the explorer's
+  // own block, so the user's `*.log` line above it is never touched.
   toggle("a.yaml", false);
   await paint();
-  assert.match(rules(), /(^|\n)a\.yaml\n/, "uncheck adds an exact ignore line");
+  assert.match(rules(), /# GitHub Sync selection/, "the explorer marks its own rule block");
+  assert.match(rules(), /(^|\n)a\.yaml\n/, "unchecking writes the exact path");
+  assert.match(rules(), /^\*\.log\n/, "the user's own rules stay on top, unchanged");
 
-  // Checking the now-excluded file removes that rule again.
-  setPreview([{ path: "sub/c.yaml", size: 6, is_dir: false }], [
-    { path: "a.yaml", size: 10, is_dir: false, pattern: "a.yaml" },
-    { path: "b.log", size: 4, is_dir: false, pattern: "*.log" },
-  ]);
-  await modules.actions.refreshIgnorePreview();
+  // Ticking it again removes the line, so the text ends up exactly as it was.
+  levels[""] = {
+    entries: [fileEntry("a.yaml", { ignored: true, pattern: "a.yaml" }), fileEntry("b.log", { ignored: true, pattern: "*.log" })],
+  };
+  await modules.actions.refreshExplorer();
   await paint();
-  assert.ok(checkboxOf("a.yaml").row.classList.contains("excluded"), "file moved to the ignored section");
+  assert.ok(explorerRow(root, "a.yaml").classList.contains("unchecked"), "the file row now reads as ignored");
   toggle("a.yaml", true);
   await paint();
-  assert.equal(rules().trim(), "*.log", "check removes the exact ignore line");
+  assert.equal(rules(), "*.log\n", "re-checking deletes the rule again, marker and all");
 
-  // Everything checked → the button unlocks, appends one catch-all rule and
-  // never duplicates it.
-  setPreview(
-    [
-      { path: "a.yaml", size: 10, is_dir: false },
-      { path: "sub/c.yaml", size: 6, is_dir: false },
-    ],
-    []
-  );
-  await modules.actions.refreshIgnorePreview();
+  // A file ignored by a *broader* rule cannot be freed by deleting a line, so
+  // ticking it writes an anchored re-include; unticking it again leaves an
+  // exact rule (never a change that the next scan could silently undo).
+  levels[""] = { entries: [fileEntry("a.yaml"), fileEntry("b.log", { ignored: true, pattern: "*.log" })] };
+  await modules.actions.refreshExplorer();
   await paint();
-  assert.equal(uncheckAllButton().disabled, false, "all rows checked unlocks Uncheck all");
-  uncheckAllButton().click();
+  toggle("b.log", true);
   await paint();
-  assert.equal(rules().trim().split("\n").filter((line) => line.trim() === "*").length, 1, "one `*` rule added");
-  assert.match(rules(), /(^|\n)\*\n/);
-  uncheckAllButton().click();
+  assert.match(rules(), /(^|\n)!\/b\.log\n/, "ticking a glob-ignored file re-includes it");
+  toggle("b.log", false);
   await paint();
-  assert.equal(rules().trim().split("\n").filter((line) => line.trim() === "*").length, 1, "no duplicate `*` rule");
-  const previewCall = [...calls].reverse().find((call) => call.url === "api/preview_ignore" && call.body);
-  assert.match(previewCall.body.ignore, /(^|\n)\*(\n|$)/, "preview refresh sends the new rules");
-
-  // With the catch-all in place every row is unchecked → the button disables
-  // again until everything is ticked back in.
-  setPreview([], [
-    { path: "a.yaml", size: 10, is_dir: false, pattern: "*" },
-    { path: "b.log", size: 4, is_dir: false, pattern: "*" },
-    { path: "sub/c.yaml", size: 6, is_dir: false, pattern: "*" },
-  ]);
-  await modules.actions.refreshIgnorePreview();
-  await paint();
-  assert.equal(uncheckAllButton().disabled, true, "everything unchecked disables Uncheck all again");
-
-  // Ticking the folder row re-includes all of its files: parent first, then files.
-  toggle("sub", true);
-  await paint();
-  assert.match(rules(), /(^|\n)!\/sub\/\n/, "parent folder is re-included first");
-  assert.match(rules(), /(^|\n)!\/sub\/c\.yaml\n/, "the file itself is re-included");
-
-  // Unticking the folder again removes only the file negation, not the chain.
-  setPreview([{ path: "sub/c.yaml", size: 6, is_dir: false }], [
-    { path: "a.yaml", size: 10, is_dir: false, pattern: "*" },
-    { path: "b.log", size: 4, is_dir: false, pattern: "*" },
-  ]);
-  await modules.actions.refreshIgnorePreview();
-  await paint();
-  assert.equal(checkboxOf("sub").input.checked, true, "fully included folder renders checked");
-  toggle("sub", false);
-  await paint();
-  assert.ok(!/(^|\n)!\/sub\/c\.yaml(\n|$)/.test(rules()), "the file negation is removed");
-  assert.match(rules(), /(^|\n)!\/sub\/(\n|$)/, "ancestor negation stays for other selections");
+  assert.equal(rules(), "*.log\n", "…and unticking removes exactly the line it added");
 });
 
-test("preview groups folder files into folder rows and gates Uncheck all", async () => {
-  const file = (path, size, extra = {}) => ({ path, size, is_dir: false, ...extra });
-  const preview = {
-    direction: "upload",
-    included: [
-      file("a.yaml", 10),
-      file("sub/c.yaml", 6),
-      file("sub/nested/d.yaml", 8),
-      file("other/e.yaml", 4),
-    ],
-    excluded: [
-      file("sub/junk.log", 2, { pattern: "*.log" }),
-      { path: ".storage", is_dir: true, size: 0, pattern: ".storage/" },
-      { path: ".git", is_dir: true, size: 0, pattern: ".git/", always_ignored: true },
-    ],
-    included_count: 4,
-    excluded_count: 3,
-    excluded_file_count: 1,
-    included_size: 28,
-    truncated: false,
-  };
-  const root = await boot({ responses: { "api/preview_ignore": preview } });
+test("file explorer folder rows tick whole folders, however big they are", async () => {
+  // `big` holds 4 000 files and was never listed — the app only got the folder
+  // row. Ticking it must still cover all of it, in one line.
+  const big = () => dirEntry("big", { files: 4000, included: 4000, dirs: 12, included_size: 400000 });
+  const mixed = () => dirEntry("mixed", { files: 5, included: 3, excluded: 2 });
+  const storage = () =>
+    dirEntry(".storage", { ignored: true, pattern: ".storage/", files: 0, included: 0, complete: false, unknown: true });
+  const levels = { "": { entries: [big(), mixed(), storage()] } };
+  const server = previewTreeServer({
+    levels,
+    root: { files: 4005, included: 4003, excluded: 2, dirs: 14, ignored_dirs: 0, included_size: 400030, complete: true },
+  });
+  const root = await boot({ handlers: { "api/preview_tree": server } });
   await modules.actions.refresh();
-  const setPreview = (included, excluded) => {
-    preview.included = included;
-    preview.excluded = excluded;
-    preview.included_count = included.length;
-    preview.excluded_count = excluded.length;
-    preview.excluded_file_count = excluded.filter((item) => !item.is_dir).length;
-    preview.included_size = included.reduce((sum, item) => sum + (item.size || 0), 0);
-  };
 
   modules.actions.startNewMapping();
-  modules.state.ignoreSide.value = "upload";
-  modules.actions.patchEditor({ local_path: "homeassistant", ignore_upload: "*.log\n.storage/\n" });
+  modules.actions.patchEditor({ local_path: "homeassistant", ignore_upload: ".storage/\n*.cache\n" });
   modules.actions.gotoStep(3);
   await paint();
 
-  const row = (name) =>
-    [...root.querySelectorAll("label")].find(
-      (node) => node.classList.contains("list-row") && node.textContent.includes(name)
-    );
+  const rules = () => modules.state.editor.value.ignore_upload;
+  const row = (name) => {
+    const found = explorerRow(root, name);
+    assert.ok(found, `the explorer renders a row for ${name}`);
+    return found;
+  };
   const toggle = (name, checked) => {
-    const target = row(name);
-    assert.ok(target, `a checkbox row exists for ${name}`);
-    const input = target.querySelector("input");
+    const input = row(name).querySelector("input");
     input.checked = checked;
     input.dispatchEvent({ type: "change" });
   };
-  const rules = () => modules.state.editor.value.ignore_upload;
-  const uncheckAllButton = () => findButton(root, "Uncheck all");
 
-  // Folders collapse into single rows with tri-state checkboxes.
-  const sub = row("sub");
-  assert.ok(sub.classList.contains("folder"), "nested files collapse into a folder row");
-  assert.match(sub.textContent, /2 of 3 files/, "partial folder shows included vs total");
-  assert.equal(sub.querySelector("input").checked, false, "partial folder is not fully checked");
-  assert.ok(!sub.classList.contains("excluded"), "partial folders keep readable text");
-  const other = row("other");
-  assert.equal(other.querySelector("input").checked, true, "fully included folder renders checked");
-  assert.match(other.textContent, /1 file/);
+  assert.ok(row("big").classList.contains("folder"), "folders render as folder rows");
+  assert.match(row("big").textContent, /4000 files/, "counts come from the folder rollup, not from loaded rows");
+  assert.match(row("big").textContent, /12 folders/, "…including nested folders");
+  assert.equal(row("big").querySelector("input").checked, true, "a fully included folder renders checked");
+  await settle();
+  assert.equal(row("mixed").querySelector("input").indeterminate, true, "a partly included folder is indeterminate");
+  assert.ok(row("mixed").classList.contains("partial"), "…and is styled as such");
+  assert.match(row("mixed").textContent, /3 of 5 files/, "…and says how far it is");
+  assert.equal(row(".storage").querySelector("input").checked, false, "an ignored folder renders unchecked");
+  assert.match(row(".storage").textContent, /\.storage\//, "…and names the rule that ignores it");
 
-  // Always-ignored folders stay hidden; pruned folders remain selectable.
-  assert.ok(!row(".git"), ".git is hidden from the list");
-  const storage = row(".storage");
-  assert.ok(storage.classList.contains("folder"), "pruned folders still get a row");
-  assert.equal(storage.querySelector("input").checked, false, "pruned folder is unchecked");
-  assert.match(storage.textContent, /\.storage\//);
-
-  // "Uncheck all" stays disabled while anything is unchecked.
-  assert.equal(uncheckAllButton().disabled, true);
-
-  // Unchecking a fully checked folder writes one exact rule per file.
-  toggle("other", false);
+  // Unticking a 4 000-file folder writes one anchored folder rule — never
+  // 4 000 lines — and leaves the rules above the block alone.
+  toggle("big", false);
   await paint();
-  assert.match(rules(), /(^|\n)other\/e\.yaml\n/, "folder uncheck adds per-file rules");
+  assert.match(rules(), /(^|\n)\/big\/\n/, "unchecking a folder writes one folder rule");
+  assert.equal(rules().split("\n").filter((line) => line.startsWith("big/")).length, 0, "no per-file lines are written");
+  assert.match(rules(), /^\.storage\/\n\*\.cache\n/, "the rules above the explorer block are untouched");
+  const scan = server.requests().at(-1).body;
+  assert.match(scan.ignore, /\/big\//, "the refreshed scan is asked with the new rules");
 
-  // Checking a partial folder ticks only its excluded file, chain-negated.
-  setPreview([file("a.yaml", 10), file("sub/c.yaml", 6), file("sub/nested/d.yaml", 8)], [
-    file("other/e.yaml", 4, { pattern: "other/e.yaml" }),
-    file("sub/junk.log", 2, { pattern: "*.log" }),
-    { path: ".storage", is_dir: true, size: 0, pattern: ".storage/" },
-  ]);
-  await modules.actions.refreshIgnorePreview();
+  // Ticking it again deletes that rule and writes nothing else, because
+  // nothing above re-ignores the folder.
+  levels[""] = { entries: [dirEntry("big", { ignored: true, pattern: "/big/", files: 0, included: 0, excluded: 0, dirs: 0, complete: false, unknown: true }), mixed(), storage()] };
+  await modules.actions.refreshExplorer();
   await paint();
-  toggle("sub", true);
+  toggle("big", true);
   await paint();
-  assert.match(rules(), /(^|\n)!\/sub\/\n/, "parent folder is re-included first");
-  assert.match(rules(), /(^|\n)!\/sub\/junk\.log\n/, "the excluded file is re-included");
+  assert.ok(!rules().includes("/big/"), "ticking the folder removes the folder rule again");
+  assert.ok(!rules().includes("!/big/"), "…and writes a re-include only when one is needed");
 
-  // Unticking the now-fully-checked folder removes the file rule, keeps the chain.
-  setPreview([
-    file("a.yaml", 10),
-    file("sub/c.yaml", 6),
-    file("sub/nested/d.yaml", 8),
-    file("sub/junk.log", 2),
-  ], [
-    file("other/e.yaml", 4, { pattern: "other/e.yaml" }),
-    { path: ".storage", is_dir: true, size: 0, pattern: ".storage/" },
-  ]);
-  await modules.actions.refreshIgnorePreview();
+  // Ticking a folder that a *user* rule ignores must not edit that rule: the
+  // explorer beats it from inside its own block instead.
+  levels[""] = { entries: [big(), mixed(), storage()] };
+  await modules.actions.refreshExplorer();
   await paint();
-  assert.equal(row("sub").querySelector("input").checked, true, "fully included folder renders checked");
-  toggle("sub", false);
+  toggle(".storage", true);
   await paint();
-  assert.ok(!/(^|\n)!\/sub\/junk\.log(\n|$)/.test(rules()), "file negation is removed");
-  assert.match(rules(), /(^|\n)!\/sub\/(\n|$)/, "ancestor negation stays for other selections");
-  assert.match(rules(), /(^|\n)sub\/c\.yaml\n/, "included files are excluded with exact rules");
+  assert.match(rules(), /^\.storage\/\n/, "the preset line stays exactly where it was");
+  assert.match(rules(), /(^|\n)!\/\.storage\/\n/, "the folder is re-included from the block");
+  assert.match(rules(), /(^|\n)!\/\.storage\/\*\*\n/, "…together with everything below it");
 
-  // Everything checked again → the button unlocks.
-  setPreview([
-    file("a.yaml", 10),
-    file("sub/c.yaml", 6),
-    file("sub/nested/d.yaml", 8),
-    file("other/e.yaml", 4),
-  ], []);
-  await modules.actions.refreshIgnorePreview();
+  // One tick on a mixed folder completes it: the chain covers its files too.
+  toggle("mixed", true);
   await paint();
-  assert.equal(uncheckAllButton().disabled, false, "enabled once every row is checked");
+  assert.match(rules(), /(^|\n)!\/mixed\/\*\*\n/, "ticking a partial folder includes its files as well");
 });
+
+test("file explorer opens folders on click and pages huge levels", async () => {
+  const many = Array.from({ length: 205 }, (_unused, index) => fileEntry(`dump/state-${index}.yaml`));
+  const levels = {
+    "": { entries: [dirEntry("esphome", { files: 2, included: 2, dirs: 1 }), ...many], total: 1 + many.length },
+    esphome: { entries: [dirEntry("esphome/living", { files: 2, included: 2 }), fileEntry("esphome/kitchen.yaml")] },
+    "esphome/living": { entries: [fileEntry("esphome/living/lights.yaml"), fileEntry("esphome/living/script.yaml")] },
+  };
+  const server = previewTreeServer({ levels, root: { files: 208, included: 208, excluded: 0, dirs: 2, complete: true } });
+  const root = await boot({ handlers: { "api/preview_tree": server } });
+  await modules.actions.refresh();
+
+  modules.actions.startNewMapping();
+  modules.actions.patchEditor({ local_path: "homeassistant", ignore_upload: "" });
+  modules.actions.gotoStep(3);
+  await paint();
+
+  // Only what the request asked for is on screen: the root, one page of it.
+  assert.ok(explorerRow(root, "esphome"), "the mapping folder lists its folders first");
+  assert.ok(explorerRow(root, "state-198.yaml"), "…up to one page of files");
+  assert.ok(!explorerRow(root, "state-199.yaml"), "and not beyond it");
+  assert.equal(treeRowsOf(root).length, 200, "a level is paged instead of being cut off");
+  const more = root.querySelector(".tree-more");
+  assert.ok(more, "a paged level offers Show more instead of hiding rows");
+  assert.match(more.textContent, /6 entries more in this folder/, "…and says how many are left");
+  assert.ok(!explorerRow(root, "kitchen.yaml"), "closed folders are not rendered");
+
+  // Clicking a folder name opens it — and asks for exactly that level.
+  explorerRow(root, "esphome").querySelector(".tree-name").click();
+  await paint();
+  assert.deepEqual(modules.state.treeExpanded.value, ["esphome"], "the open folder is remembered");
+  assert.deepEqual(
+    server.requests().at(-1).body.levels.map((item) => item.path),
+    ["", "esphome"],
+    "opening a folder requests its level next to the root"
+  );
+  assert.ok(explorerRow(root, "kitchen.yaml"), "the opened folder shows its files");
+  assert.ok(!explorerRow(root, "lights.yaml"), "nested folders stay closed until clicked");
+  assert.ok(explorerRow(root, "esphome").classList.contains("open"), "the opened folder row says it is open");
+
+  // The arrow opens and closes them the same way; closing needs no request.
+  explorerRow(root, "living").querySelector(".tree-toggle").click();
+  await paint();
+  assert.ok(explorerRow(root, "lights.yaml"), "a nested folder expands the same way");
+  assert.equal(treeRowsOf(root).length, 204, "rows appear exactly where the tree puts them");
+  const lights = explorerRow(root, "lights.yaml");
+  assert.match(`${lights.style.cssText}`, /padding-left:38px/, "depth becomes indentation");
+
+  const requests = server.requests().length;
+  explorerRow(root, "living").querySelector(".tree-toggle").click();
+  await paint();
+  assert.ok(!explorerRow(root, "lights.yaml"), "collapse hides the children again");
+  assert.equal(server.requests().length, requests, "collapsing asks for nothing");
+
+  // Show more appends the next page instead of replacing what is on screen.
+  more.querySelector("button").click();
+  await paint();
+  assert.equal(treeRowsOf(root).length, 208, "Show more keeps the earlier rows and adds the rest");
+  assert.ok(!root.querySelector(".tree-more"), "…and the control disappears once the level is complete");
+  const tail = explorerRow(root, "state-204.yaml");
+  assert.ok(tail, "the very last file of a 206-entry folder is reachable");
+  const input = tail.querySelector("input");
+  input.checked = false;
+  input.dispatchEvent({ type: "change" });
+  await paint();
+  assert.match(
+    modules.state.editor.value.ignore_upload,
+    /(^|\n)dump\/state-204\.yaml\n/,
+    "…and can be unticked like any other file"
+  );
+});
+
+test("file explorer flags a level the server capped instead of paging forever", async () => {
+  const huge = Array.from({ length: 6 }, (_unused, index) => fileEntry(`dump/state-${index}.yaml`));
+  const server = previewTreeServer({
+    levels: { "": { entries: huge, total: huge.length, capped: true } },
+    root: { files: 6, included: 6, excluded: 0, dirs: 0, complete: true },
+  });
+  const root = await boot({ handlers: { "api/preview_tree": server } });
+  await modules.actions.refresh();
+
+  modules.actions.startNewMapping();
+  modules.actions.patchEditor({ local_path: "homeassistant", ignore_upload: "" });
+  modules.actions.gotoStep(3);
+  await paint();
+
+  assert.ok(explorerRow(root, "state-0.yaml"), "the listed rows are still there and tickable");
+  const more = root.querySelector(".tree-more");
+  assert.ok(more, "a capped level says so instead of ending silently");
+  assert.match(more.textContent, /filter/i, "…and points at the filter box, which reaches the rest");
+  assert.equal(more.querySelector("button"), null, "…with no Show more that could never finish");
+});
+
+test("explorer Check all and Uncheck all work from any state", async () => {
+  const levels = {
+    "": {
+      entries: [
+        dirEntry("esphome", { files: 3, included: 2, excluded: 1 }),
+        fileEntry("a.yaml"),
+        fileEntry("b.log", { ignored: true, pattern: "*.log" }),
+      ],
+    },
+  };
+  let rootCounts = { files: 4, included: 3, excluded: 1, dirs: 1, ignored_dirs: 0, included_size: 40, complete: true };
+  const server = previewTreeServer({ levels, root: () => rootCounts });
+  const root = await boot({ handlers: { "api/preview_tree": server } });
+  await modules.actions.refresh();
+
+  modules.actions.startNewMapping();
+  modules.actions.patchEditor({ local_path: "homeassistant", ignore_upload: "*.log\nsecrets.yaml\n" });
+  modules.actions.gotoStep(3);
+  await paint();
+
+  const button = (label) => findButton(root, label);
+  const rules = () => modules.state.editor.value.ignore_upload;
+
+  // The regression this whole change is about: while any file was already
+  // ignored, "Uncheck all" used to stay disabled forever — it looked dead.
+  assert.equal(button("Uncheck all").disabled, false, "Uncheck all works while something is unchecked");
+  assert.equal(button("Check all").disabled, false, "Check all works while something is ignored");
+
+  button("Uncheck all").click();
+  await paint();
+  assert.match(rules(), /^\*\.log\nsecrets\.yaml\n/, "the user's own rules stay above the block");
+  assert.match(rules(), /# GitHub Sync selection[^\n]*\n\*\n$/, "the block holds exactly one catch-all rule");
+  assert.equal(rules().split("\n").filter((line) => line.trim() === "*").length, 1, "one `*` rule ignores the whole side");
+
+  // Pressing it twice must not stack rules — it says so instead.
+  const before = rules();
+  button("Uncheck all").click();
+  await paint();
+  assert.equal(rules(), before, "a second press is a no-op");
+  assert.ok(
+    modules.state.toasts.value.some((toast) => /already unchecked/.test(toast.message)),
+    "…and the toast explains why"
+  );
+
+  // Check all reverses it with `!**`, still leaving the user's rules alone.
+  button("Check all").click();
+  await paint();
+  assert.match(rules(), /(^|\n)!\*\*\n/, "Check all re-includes everything below the block marker");
+  assert.ok(!/(^|\n)\*(\n|$)/.test(rules()), "the catch-all line is gone");
+  assert.match(rules(), /^secrets\.yaml$/m, "secrets.yaml is untouched by Check all");
+
+  // Reset selection removes only what the explorer wrote.
+  button("Reset selection").click();
+  await paint();
+  assert.equal(rules(), "*.log\nsecrets.yaml\n", "Reset selection leaves exactly the user's rules");
+
+  // Once nothing is included, Uncheck all rests…
+  rootCounts = { files: 4, included: 0, excluded: 4, dirs: 0, ignored_dirs: 0, complete: true };
+  levels[""] = { entries: [fileEntry("a.yaml", { ignored: true, pattern: "*" })] };
+  await modules.actions.refreshExplorer();
+  await paint();
+  assert.equal(button("Uncheck all").disabled, true, "nothing left to uncheck disables the button");
+  assert.equal(button("Check all").disabled, false, "…while Check all stays available");
+
+  // …but while the scan is cut short the counts are not the truth, so both
+  // buttons stay clickable rather than lying about the folder.
+  rootCounts = { files: 40, included: 0, excluded: 40, dirs: 0, ignored_dirs: 0, complete: false };
+  await modules.actions.refreshExplorer({ depth: 2 });
+  await paint();
+  assert.equal(button("Uncheck all").disabled, false, "a partial scan keeps Uncheck all usable");
+  assert.match(root.innerHTML, /scan limit/, "and the explorer flags the partial scan");
+});
+
+test("explorer filter searches the whole folder, not just what is open", async () => {
+  const levels = { "": { entries: [dirEntry("esphome", { files: 4, included: 4, dirs: 1 })] } };
+  const server = previewTreeServer({
+    levels,
+    root: { files: 4, included: 4, excluded: 0, dirs: 1, complete: true },
+    search: (query) => ({
+      query,
+      total: 2,
+      entries: [
+        fileEntry("esphome/living/lights.yaml"),
+        fileEntry("esphome/living/script.yaml", { ignored: true, pattern: "*.yaml" }),
+      ],
+    }),
+  });
+  const root = await boot({ handlers: { "api/preview_tree": server } });
+  await modules.actions.refresh();
+  modules.actions.startNewMapping();
+  modules.actions.patchEditor({ local_path: "homeassistant", ignore_upload: "*.yaml\n" });
+  modules.actions.gotoStep(3);
+  await paint();
+
+  modules.state.treeQuery.value = "lights";
+  await modules.actions.refreshExplorer();
+  await paint();
+
+  assert.equal(server.requests().at(-1).body.query, "lights", "the filter travels to the explorer request");
+  assert.match(root.innerHTML, /2 matches for “lights”/, "the head line explains the flat result list");
+  assert.match(root.innerHTML, /esphome\/living\/lights\.yaml/, "hits show their full path");
+  assert.ok(explorerRow(root, "script.yaml").classList.contains("unchecked"), "hits keep their tick state");
+
+  const hit = explorerRow(root, "lights.yaml").querySelector("input");
+  hit.checked = false;
+  hit.dispatchEvent({ type: "change" });
+  await paint();
+  assert.match(
+    modules.state.editor.value.ignore_upload,
+    /(^|\n)esphome\/living\/lights\.yaml\n/,
+    "a hit can be unticked straight from the search list"
+  );
+
+  // Typing in the rules box re-scans after a short pause, so the tree follows
+  // the rules without firing one request per keystroke.
+  const requests = server.requests().length;
+  const textarea = [...root.querySelectorAll("textarea")].at(-1);
+  textarea.value = "*.yaml\n*.db\n";
+  textarea.dispatchEvent({ type: "input" });
+  await paint();
+  assert.equal(server.requests().length, requests, "the keystroke itself sends nothing");
+  await new Promise((resolve) => setTimeout(resolve, 450));
+  assert.ok(server.requests().length > requests, "a moment later the explorer refreshed");
+
+  // Clearing the filter goes back to the tree.
+  modules.state.treeQuery.value = "";
+  await modules.actions.refreshExplorer();
+  await paint();
+  assert.ok(explorerRow(root, "esphome"), "clearing the filter shows the tree again");
+});
+
 
 test("unchecked preview rows keep readable text (no strikethrough)", () => {
   const css = fs.readFileSync(
