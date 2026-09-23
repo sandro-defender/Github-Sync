@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.7.0] - 2026-09-23
+
+- feat(ui): folder rows in sync preview, readable unchecked rows, gated Uncheck all
+
 ## [0.6.0] - 2026-09-23
 
 - feat(ui): working file-selection checkboxes, Uncheck all, GitHub repo settings link
