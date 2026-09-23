@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.9.0] - 2026-09-23
+
+- feat(editor,ui): widescreen brother windows for upload/download and github app install options
+- fix(explorer,access): fix folder/file deselect and allow unrestricted repo access
+
 ## [0.8.1] - 2026-09-23
 
 - fix(updates,settings,explorer): direct GitHub update checks, repo manage link, operation mode save, and explorer deselect
