@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.6.0] - 2026-09-23
+
+- feat(ui): working file-selection checkboxes, Uncheck all, GitHub repo settings link
+
 ## [0.5.2] - 2026-09-22
 
 - docs(release): record that 0.5.1 shipped and the new pipeline is proven
