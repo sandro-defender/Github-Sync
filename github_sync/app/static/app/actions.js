@@ -394,6 +394,20 @@ function folderChain(path) {
   return [...chain, `!/${full}/`, `!/${full}/**`];
 }
 
+/** `true` when a rule in the block re-includes an ancestor of `path` (e.g. `!**` or `!/parent/**`). */
+function hasAncestorReinclude(block, path) {
+  if (block.includes(REINCLUDE_ALL)) return true;
+  const clean = String(path || "").trim().replace(/^\/+|\/+$/g, "");
+  const parts = clean.split("/").filter(Boolean);
+  for (let i = 1; i <= parts.length; i++) {
+    const prefix = parts.slice(0, i).join("/");
+    if (i < parts.length && (block.includes(`!/${prefix}/**`) || block.includes(`!${prefix}/**`))) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /** `true` when the block only ever *re-included* this path, so deleting that is enough. */
 function onlyReincluded(block, matches) {
   const negated = block.some((line) => matches(line) && parseRule(line)?.negated);
@@ -409,16 +423,24 @@ function onlyReincluded(block, matches) {
  */
 function applyPathToggle(text, path, included, entry = null) {
   const { own, block } = splitRules(text);
-  const matches = (line) => namesPath(line, path);
+  const clean = String(path || "").trim().replace(/^\/+|\/+$/g, "");
+  const matches = (line) => namesPath(line, clean);
   const kept = block.filter((line) => !matches(line));
   if (included) {
-    if (!needsReincludeChain(entry, path, block) || kept.includes(REINCLUDE_ALL)) return joinRules(own, kept);
-    const chain = includeChain(path).filter((line) => !kept.includes(line) && !own.includes(line.trim()));
+    if (!needsReincludeChain(entry, clean, block) || kept.includes(REINCLUDE_ALL)) return joinRules(own, kept);
+    const chain = includeChain(clean).filter((line) => !kept.includes(line) && !own.includes(line.trim()));
     return joinRules(own, [...kept, ...chain]);
   }
-  if (block.includes(EXCLUDE_ALL)) return joinRules(own, kept); // removing re-includes deselects under catch-all
+  // Unticking path:
+  // If an ancestor re-includes this path (e.g. !/parent/** or !**), we must explicitly exclude it.
+  if (hasAncestorReinclude(kept, clean)) {
+    return joinRules(own, [...kept, clean]);
+  }
+  // Under EXCLUDE_ALL (*), removing re-includes deselects under catch-all.
+  if (block.includes(EXCLUDE_ALL)) return joinRules(own, kept);
+  // If the path was only re-included in the explorer block, dropping that re-include line is enough.
   if (onlyReincluded(block, matches)) return joinRules(own, kept);
-  return joinRules(own, [...kept, path]);
+  return joinRules(own, [...kept, clean]);
 }
 
 /**
@@ -435,18 +457,24 @@ function applyPathToggle(text, path, included, entry = null) {
  */
 function applyFolderToggle(text, folder, included, entry = null) {
   const { own, block } = splitRules(text);
-  const matches = (line) => namesPath(line, folder, { inside: true });
+  const clean = String(folder || "").trim().replace(/^\/+|\/+$/g, "");
+  const matches = (line) => namesPath(line, clean, { inside: true });
   const kept = block.filter((line) => !matches(line));
   if (included) {
-    if (!needsReincludeChain({ ...entry, is_dir: true }, folder, block) || kept.includes(REINCLUDE_ALL)) {
+    if (!needsReincludeChain({ ...entry, is_dir: true }, clean, block) || kept.includes(REINCLUDE_ALL)) {
       return joinRules(own, kept);
     }
-    const chain = folderChain(folder).filter((line) => !kept.includes(line) && !own.includes(line.trim()));
+    const chain = folderChain(clean).filter((line) => !kept.includes(line) && !own.includes(line.trim()));
     return joinRules(own, [...kept, ...chain]);
   }
-  if (block.includes(EXCLUDE_ALL)) return joinRules(own, kept); // removing re-includes deselects under catch-all
-  if (onlyReincluded(block, matches)) return joinRules(own, kept);
-  return joinRules(own, [...kept, `/${folder}/`]);
+  // Unticking folder:
+  // If an ancestor re-includes this folder (e.g. !/parent/** or !**), we must explicitly exclude it.
+  if (hasAncestorReinclude(kept, clean)) {
+    return joinRules(own, [...kept, `/${clean}/`]);
+  }
+  // Under EXCLUDE_ALL (*), removing re-includes deselects under catch-all.
+  if (block.includes(EXCLUDE_ALL)) return joinRules(own, kept);
+  return joinRules(own, [...kept, `/${clean}/`]);
 }
 
 /* ----------------------------------------------------- explorer data flows */

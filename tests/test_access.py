@@ -32,8 +32,10 @@ class AccessTests(unittest.TestCase):
 
     def test_empty_means_none_legacy_means_unrestricted(self):
         require_access(None, "owner/repo", write=True)
+        # Empty repository allowlist allows all repositories
+        require_access({"mode": "write", "repositories": []}, "owner/repo")
         with self.assertRaises(AccessDenied):
-            require_access({"mode": "write", "repositories": []}, "owner/repo")
+            require_access({"mode": "write", "repositories": ["other/repo"]}, "owner/repo")
 
 
 class APIAccessTests(unittest.IsolatedAsyncioTestCase):
@@ -73,7 +75,7 @@ class APIAccessTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(response.status_code, 403)
 
     async def test_permission_changes_apply_to_existing_mappings(self):
-        response = await self.client.post("/api/access", json={"mode": "read", "repositories": []})
+        response = await self.client.post("/api/access", json={"mode": "read", "repositories": ["other/repo"]})
         self.assertEqual(response.status_code, 200)
         response = await self.client.post("/api/check", json={"mapping_id": "one"})
         self.assertEqual(response.status_code, 403)

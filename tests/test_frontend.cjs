@@ -986,6 +986,37 @@ test("deselecting folder and file under catch-all removes re-include rules", asy
   assert.ok(!modules.state.editor.value.ignore_upload.includes("!/myfolder/file.txt"), "file re-include removed on untick");
 });
 
+test("deselecting file or subfolder inside re-included folder writes explicit exclusion", async () => {
+  await boot();
+  modules.actions.startNewMapping();
+  modules.actions.patchEditor({
+    local_path: "homeassistant",
+    ignore_upload: "# GitHub Sync selection — the file explorer edits the lines below\n*\n!/myfolder/\n!/myfolder/**\n",
+  });
+  modules.state.ignoreSide.value = "upload";
+
+  // Untick a file inside myfolder while myfolder/** is still active
+  modules.actions.toggleIgnoredPath("myfolder/subfile.yaml", false, { is_dir: false, path: "myfolder/subfile.yaml" });
+  await paint();
+  let rules = modules.state.editor.value.ignore_upload;
+  assert.ok(rules.includes("myfolder/subfile.yaml"), "explicit rule added to exclude file under re-included parent folder");
+
+  // Untick a subfolder inside myfolder while myfolder/** is still active
+  modules.actions.toggleIgnoredFolder("myfolder/sub", false, { is_dir: true, path: "myfolder/sub" });
+  await paint();
+  rules = modules.state.editor.value.ignore_upload;
+  assert.ok(rules.includes("/myfolder/sub/"), "explicit rule added to exclude subfolder under re-included parent folder");
+
+  // Unticking folder when no catch-all exists appends exact folder rule
+  modules.actions.patchEditor({
+    ignore_upload: "",
+  });
+  modules.actions.toggleIgnoredFolder("esphome", false, { is_dir: true, path: "esphome" });
+  await paint();
+  rules = modules.state.editor.value.ignore_upload;
+  assert.ok(rules.includes("/esphome/"), "unticking folder without catch-all writes /esphome/");
+});
+
 test("logout clears account state and returns to the connect screen", async () => {
   const root = await boot();
   await modules.actions.refresh();

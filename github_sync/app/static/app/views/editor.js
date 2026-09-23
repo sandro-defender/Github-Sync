@@ -6,6 +6,7 @@ import {
   closeEditor,
   gotoStep,
   loadRepos,
+  openAuthSetup,
   patchEditor,
   pickFolder,
   pickRepo,
@@ -15,7 +16,7 @@ import {
   setIgnoreSide,
 } from "../actions.js";
 import { directionLabel, intervalLabel, matchesQuery } from "../format.js";
-import { branches, browser, editor, ignoreSide, presets, repoQuery, repos, tree } from "../state.js";
+import { branches, browser, editor, ignoreSide, presets, repoQuery, repos, status, tree } from "../state.js";
 import { Badge, Banner, Button, Card, Field, Icon, Spinner, Switch } from "../ui.js";
 import { FileExplorer } from "./explorer.js";
 
@@ -153,10 +154,18 @@ export function RepoStep({ draft }) {
 
     <${Card}
       title="Your repositories"
-      subtitle="Read from the connected GitHub account"
+      subtitle=${status.value?.access?.repositories?.length
+        ? `Showing ${status.value.access.repositories.length} allowed repository/repositories`
+        : "Read from the connected GitHub account"}
       icon="layers"
       actions=${html`<${Button} variant="ghost" size="sm" icon="refresh" onClick=${() => { repos.value = null; loadRepos(); }}>Reload</${Button}>`}
     >
+      ${status.value?.access?.repositories?.length
+        ? html`<p class="meta note">
+            <${Icon} name="info" size=${13} />
+            Allowed repositories filter is active. To add more repos, <${Button} variant="ghost" size="sm" onClick=${() => openAuthSetup(true)}>Manage allowed repositories</${Button}>.
+          </p>`
+        : null}
       <${Field} label="Filter">
         <input type="search" value=${query} placeholder="Search by name or description" onInput=${(ev) => (repoQuery.value = ev.target.value)} />
       </${Field}>
