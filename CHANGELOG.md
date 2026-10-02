@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.9.2] - 2026-10-02
+
+- fix: keep secrets out of selected folders
+
 ## [0.9.1] - 2026-10-02
 
 - fix: apply upload scan cap after ignore filtering
