@@ -8,7 +8,9 @@ from typing import Any
 
 from ignore import IgnoreMatcher
 
-ALWAYS_IGNORE = ".git/"
+# These files are never safe to transfer through a mapping, even if a file
+# explorer selection appends a later gitignore re-include rule for their folder.
+ALWAYS_IGNORE = ".git/\nsecrets.yaml"
 MAX_FILE_SIZE = 50 * 1024 * 1024
 MAX_WALK_FILES = 20000
 

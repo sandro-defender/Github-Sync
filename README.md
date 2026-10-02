@@ -129,9 +129,9 @@ New mappings exclude runtime and secrets from **upload**:
 - `*.log`, `*.db*`
 - `__pycache__/`, `deps/`, `tts/`
 
-**Download** ignore is stricter on secrets so a GitHub copy cannot clobber `secrets.yaml` or `.storage` unless you remove those patterns.
+**Download** ignore is stricter on secrets so a GitHub copy cannot clobber `.storage`. `secrets.yaml` is always protected in both directions, even when a folder is re-included by the file explorer.
 
-`.git` is always skipped.
+`.git` and every `secrets.yaml` file are always skipped.
 
 ## Safety notes
 

@@ -108,6 +108,26 @@ class PathTests(unittest.TestCase):
         self.assertEqual([item["path"] for item in excluded], ["ignored"])
         self.assertFalse(truncated)
 
+    def test_secrets_are_not_reincluded_by_explorer_folder_selection(self) -> None:
+        scoped = self.root / "scoped"
+        selected = scoped / "esphome-modular-lvgl-buttons"
+        selected.mkdir(parents=True)
+        (selected / "Display01.yaml").write_text("x\n", encoding="utf-8")
+        (selected / "secrets.yaml").write_text("secret\n", encoding="utf-8")
+
+        included, excluded, _truncated = collect_files(
+            self.roots,
+            "homeassistant/scoped",
+            IgnoreMatcher(
+                "*\n"
+                "!/esphome-modular-lvgl-buttons/\n"
+                "!/esphome-modular-lvgl-buttons/**\n"
+            ),
+        )
+
+        self.assertEqual([item["path"] for item in included], ["esphome-modular-lvgl-buttons/Display01.yaml"])
+        self.assertEqual([item["path"] for item in excluded], ["esphome-modular-lvgl-buttons/secrets.yaml"])
+
 
 class TreeScanTests(unittest.TestCase):
     """`collect_tree` — the file explorer's one-level-at-a-time scan."""
