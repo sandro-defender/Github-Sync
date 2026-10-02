@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.9.3] - 2026-10-02
+
+- fix: protect secret backup files from sync
+
 ## [0.9.2] - 2026-10-02
 
 - fix: keep secrets out of selected folders
