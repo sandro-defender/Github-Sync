@@ -6,7 +6,7 @@ the `io.hass.version` Dockerfile label. The release workflow
 `main`, so do not edit them by hand.
 """
 
-__version__ = "0.9.3"
+__version__ = "0.9.4"
 
 # Supervisor app slug (github_sync/config.yaml) used for self-updates.
 APP_SLUG = "github_sync"

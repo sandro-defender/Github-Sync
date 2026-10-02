@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.9.4] - 2026-10-02
+
+- fix: scan explorer folders only when opened
+
 ## [0.9.3] - 2026-10-02
 
 - fix: protect secret backup files from sync
