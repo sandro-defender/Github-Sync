@@ -245,7 +245,7 @@ export function IgnoreStep({ draft }) {
         </div>
         <${Field}
           label=${isUpload ? "Upload ignore patterns" : "Download ignore patterns"}
-          hint="The explorer writes its own lines at the end of this list, after its marker comment — delete that block to start over."
+          hint="Your ignore rules stay here. GitHub Sync selection is edited in its own panel below; its generated block is kept separately at the end of this value."
         >
           <textarea
             class="mono"

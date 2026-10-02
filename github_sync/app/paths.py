@@ -456,24 +456,23 @@ def collect_tree(
                     entry.update(_tree_rollup())
                     entry["complete"] = False
                     entry["unknown"] = True
-                elif opened or search or not ignored or catch_all:
-                    # Descend for four reasons: the caller opened this folder
-                    # (its children are asked for), we are searching, the
-                    # folder is included and its file counts must be known, or
-                    # it is only ignored by the catch-all `*`/`**` the UI's
-                    # "Uncheck all" writes — same expansion `collect_files`
-                    # does, so those files stay reachable and counted.
+                elif opened or search:
+                    # Closed folders are deliberately not scanned. The caller
+                    # gets the current folder's entries immediately and opens
+                    # a child only when its contents are needed; this keeps a
+                    # large mapping from exhausting the walk budget before a
+                    # user has chosen where to look.
                     sub = scan(child_rel, level + 1, auto - 1)
                     _tree_merge(rollup, sub)
                     entry.update(sub)
                     entry["unknown"] = not sub["complete"]
                 else:
-                    # Ignored and collapsed: everything inside is excluded, but
-                    # the individual files were not walked. The row still knows
-                    # its state (unchecked) and expands on demand.
+                    # The directory is shown but not traversed until opened.
+                    # Its selection rule still applies to the full subtree.
                     entry.update(_tree_rollup())
                     entry["complete"] = False
                     entry["unknown"] = True
+                    rollup["complete"] = False
             else:
                 try:
                     size = int(child.stat().st_size)

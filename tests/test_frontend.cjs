@@ -817,7 +817,7 @@ test("explorer Check all and Uncheck all work from any state", async () => {
   await modules.actions.refreshExplorer({ depth: 2 });
   await paint();
   assert.equal(button("Uncheck all").disabled, false, "a partial scan keeps Uncheck all usable");
-  assert.match(root.innerHTML, /scan limit/, "and the explorer flags the partial scan");
+  assert.match(root.innerHTML, /open folders to scan/, "and the explorer explains partial folder coverage");
 });
 
 test("explorer filter searches the whole folder, not just what is open", async () => {

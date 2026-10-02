@@ -263,8 +263,8 @@ export function FileExplorer({ side } = {}) {
   const canCheck = !data || unsure || ignored > 0 || Number(root.ignored_dirs) > 0 || included < files;
 
   return html`<${Card}
-    title="File explorer"
-    subtitle=${`${activeSide === "download" ? "Download" : "Upload"} — open a folder and tick exactly what to sync`}
+    title="GitHub Sync selection — File explorer"
+    subtitle=${`${activeSide === "download" ? "Download" : "Upload"} — only the current folder is listed; open folders to scan their contents`}
     icon="folder"
     actions=${html`<${Button}
         variant="ghost"
@@ -321,12 +321,15 @@ export function FileExplorer({ side } = {}) {
             <b>${included}</b> of ${count(files, "file")} synced · <b>${ignored}</b> ignored ·
             ${bytes(root.included_size)}
           </span>
-          ${root.complete === false || data.truncated
+          ${data.truncated
             ? html`<${Badge}
                 tone="warning"
                 icon="warning"
                 title="The scan stopped at its entry limit, so counts and the deepest rows are partial. Folder rules still apply to everything inside the folder.">
                 scan limit</${Badge}>`
+            : null}
+          ${root.complete === false && !data.truncated
+            ? html`<${Badge} tone="neutral" title="Only open folders have been scanned.">open folders to scan</${Badge}>`
             : null}
           ${loading ? html`<span class="meta explorer-loading"><${Spinner} size=${13} /> refreshing</span>` : null}
         </div>`

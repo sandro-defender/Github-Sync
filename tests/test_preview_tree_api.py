@@ -47,8 +47,11 @@ class PreviewTreeApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(set(result["levels"]), {""})
         paths = [entry["path"] for entry in result["levels"][""]["entries"]]
         self.assertEqual(paths, [".storage", "esphome", "a.log"])
-        self.assertEqual(result["root"]["included"], 3)  # kitchen, lights, core.config
-        self.assertEqual(result["root"]["excluded"], 2)  # debug.log + a.log
+        # Closed folders are only listed. Their contents are not scanned until
+        # the caller opens them, so a large mapping starts cheaply.
+        self.assertEqual(result["root"]["included"], 0)
+        self.assertEqual(result["root"]["excluded"], 1)  # a.log
+        self.assertFalse(result["root"]["complete"])
         self.assertFalse(result["truncated"])
 
         opened = await self.post(
