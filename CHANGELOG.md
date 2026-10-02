@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.9.1] - 2026-10-02
+
+- fix: apply upload scan cap after ignore filtering
+
 ## [0.9.0] - 2026-09-23
 
 - feat(editor,ui): widescreen brother windows for upload/download and github app install options
