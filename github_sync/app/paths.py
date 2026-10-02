@@ -230,6 +230,12 @@ def collect_files(
                     }
                 )
                 continue
+            # The cap applies only to files that will actually be considered
+            # for sync. Ignored files and pruned ignored folders are filtered
+            # above, before this point. Check before adding so a mapping with
+            # exactly `limit` selected files remains valid.
+            if len(included) >= limit:
+                return included, excluded, True
             included.append(
                 {
                     "path": rel,
@@ -238,8 +244,6 @@ def collect_files(
                     "too_large": size > MAX_FILE_SIZE,
                 }
             )
-            if len(included) + len(excluded) >= limit:
-                return included, excluded, True
 
     return included, excluded, truncated
 

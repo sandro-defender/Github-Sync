@@ -89,6 +89,25 @@ class PathTests(unittest.TestCase):
         self.assertEqual(included, ["esphome/living.yaml"])
         self.assertEqual(excluded, [])
 
+    def test_ignored_files_do_not_consume_the_selected_file_limit(self) -> None:
+        """A mapping at its selected-file limit remains syncable."""
+        scoped = self.root / "scoped"
+        (scoped / "ignored").mkdir(parents=True)
+        for index in range(3):
+            (scoped / "ignored" / f"cache-{index}.txt").write_text("x\n", encoding="utf-8")
+        (scoped / "selected.yaml").write_text("x\n", encoding="utf-8")
+
+        included, excluded, truncated = collect_files(
+            self.roots,
+            "homeassistant/scoped",
+            IgnoreMatcher("ignored/\n"),
+            limit=1,
+        )
+
+        self.assertEqual([item["path"] for item in included], ["selected.yaml"])
+        self.assertEqual([item["path"] for item in excluded], ["ignored"])
+        self.assertFalse(truncated)
+
 
 class TreeScanTests(unittest.TestCase):
     """`collect_tree` — the file explorer's one-level-at-a-time scan."""

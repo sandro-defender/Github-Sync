@@ -32,6 +32,10 @@
 
 ## [Unreleased]
 
+### Sync scan limit
+
+- **Ignore rules now clearly apply before the upload scan limit.** The local-file walker only counts files that remain included after upload ignore rules have filtered the mapping, and no longer rejects a mapping with exactly 20,000 selected files. The sync error now explains that only files left selected after filtering need to be excluded or moved into a narrower mapping.
+
 ### Widescreen brother windows and GitHub App installation options
 
 - **Widescreen brother windows for mapping rules & file explorer.** Step 3 of the mapping editor ("Ignore rules") now displays two side-by-side ("brother") windows/panels on widescreen displays (min-width 960px or toggled via the toolbar): one panel for Upload rules & file explorer (Local → GitHub) and one panel for Download rules & file explorer (GitHub → Local). Each window provides independent preset chips, gitignore pattern editing, re-scanning, and interactive folder tree ticking. A toolbar toggle allows users to switch between side-by-side and single tabbed view at any time on any screen size.

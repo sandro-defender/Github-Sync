@@ -113,7 +113,10 @@ class SyncEngine:
             collect_files, self.roots, mapping["local_path"], matcher
         )
         if truncated:
-            raise PathError("Folder scan limit reached; narrow the mapping before syncing")
+            raise PathError(
+                "More than 20,000 files remain selected after applying the "
+                "ignore rules; narrow the mapping or exclude more paths before syncing"
+            )
         by_path = {item["path"]: item for item in included if not item.get("too_large")}
         skipped = [item for item in included if item.get("too_large")]
         skipped.extend(
