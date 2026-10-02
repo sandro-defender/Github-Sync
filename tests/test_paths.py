@@ -114,6 +114,7 @@ class PathTests(unittest.TestCase):
         selected.mkdir(parents=True)
         (selected / "Display01.yaml").write_text("x\n", encoding="utf-8")
         (selected / "secrets.yaml").write_text("secret\n", encoding="utf-8")
+        (selected / "secrets.yaml.bak").write_text("secret backup\n", encoding="utf-8")
 
         included, excluded, _truncated = collect_files(
             self.roots,
@@ -126,7 +127,13 @@ class PathTests(unittest.TestCase):
         )
 
         self.assertEqual([item["path"] for item in included], ["esphome-modular-lvgl-buttons/Display01.yaml"])
-        self.assertEqual([item["path"] for item in excluded], ["esphome-modular-lvgl-buttons/secrets.yaml"])
+        self.assertEqual(
+            [item["path"] for item in excluded],
+            [
+                "esphome-modular-lvgl-buttons/secrets.yaml",
+                "esphome-modular-lvgl-buttons/secrets.yaml.bak",
+            ],
+        )
 
 
 class TreeScanTests(unittest.TestCase):

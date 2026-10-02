@@ -43,7 +43,7 @@
 ### Sync scan limit
 
 - **Ignore rules now clearly apply before the upload scan limit.** The local-file walker only counts files that remain included after upload ignore rules have filtered the mapping, and no longer rejects a mapping with exactly 20,000 selected files. The sync error now explains that only files left selected after filtering need to be excluded or moved into a narrower mapping.
-- **Secrets stay excluded when selecting a folder.** `secrets.yaml` is now a non-overridable transfer exclusion, so a file explorer re-include such as `!/folder/**` cannot upload it to GitHub or overwrite it on download.
+- **Secrets stay excluded when selecting a folder.** `secrets.yaml*` is now a non-overridable transfer exclusion, so a file explorer re-include such as `!/folder/**` cannot upload `secrets.yaml`, its backups, or other secret-file variants to GitHub or overwrite them on download.
 
 ### Widescreen brother windows and GitHub App installation options
 
