@@ -861,6 +861,9 @@ export async function confirmOk() {
       const removed = result.deleted ? `, removed ${count(result.deleted, "extra file")}` : "";
       pushToast(`Downloaded ${count(result.downloaded, "file")}${removed}`, "success");
       await refresh();
+      // The download changes the mounted folder, not just mapping metadata.
+      // Re-check it before rendering so the page reflects what is now local.
+      await checkMapping(id);
     }
   } catch (_err) {
     /* the banner + toast carry the message */

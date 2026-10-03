@@ -380,6 +380,19 @@ test("confirmation dialogs only send the options the user picked", async () => {
   assert.deepEqual(upload.body, { mapping_id: "m1" });
 });
 
+test("a completed download rechecks the actual local folder", async () => {
+  const actual = { mapping_id: "m1", added: [], modified: [], deleted: [], conflicts: [] };
+  await boot({ responses: { "api/check": actual } });
+  await modules.actions.refresh();
+
+  modules.actions.askDownload(modules.state.mappings.value[0]);
+  await modules.actions.confirmOk();
+
+  assert.ok(calls.some((call) => call.url === "api/check"), "download is followed by a fresh file check");
+  assert.deepEqual(modules.state.diff.value, actual, "the page displays the refreshed local state");
+  assert.equal(modules.state.view.value, "diff");
+});
+
 test("update failures and fallback releases never claim a verified install", async () => {
   const root = await boot({ updates: { error: "Offline", latest_version: "9.9.9" } });
   modules.state.view.value = "settings";

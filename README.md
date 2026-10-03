@@ -107,6 +107,8 @@ exposed to your network. Pages:
 | **Edit** | Change folder, repo, branch, or ignore rules. |
 | **Remove** | Deletes the mapping only — not GitHub, not local files. |
 
+After a completed download, GitHub Sync automatically checks the mapped local folder again and opens the refreshed result, so the page reflects the files that were actually written or removed.
+
 ### Dry-run safety
 
 In an **Upload** or **Download** confirmation, choose **Preview (dry run)** rather than the execution button. The plan lists creates, overwrites, deletions, unchanged counts and skipped counts. Upload paths are relative to the repository root; download paths are relative to your mapped local folder. Only the first 400 actions are displayed; totals include the full plan.

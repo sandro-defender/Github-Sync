@@ -53,6 +53,7 @@
 - **Ignore rules now clearly apply before the upload scan limit.** The local-file walker only counts files that remain included after upload ignore rules have filtered the mapping, and no longer rejects a mapping with exactly 20,000 selected files. The sync error now explains that only files left selected after filtering need to be excluded or moved into a narrower mapping.
 - **Secrets stay excluded when selecting a folder.** `secrets.yaml*` is now a non-overridable transfer exclusion, so a file explorer re-include such as `!/folder/**` cannot upload `secrets.yaml`, its backups, or other secret-file variants to GitHub or overwrite them on download.
 - **Lazy folder scanning and separate selection panel.** The ignore-rule editor and GitHub Sync selection browser are now clearly separate panels. The browser lists only the current folder at first and scans a child folder only when it is opened, avoiding an immediate recursive walk that can exhaust the scan limit.
+- **Download now refreshes actual file state.** Once a download completes, the app re-checks the mapping and displays the current local comparison instead of leaving the previous page state visible.
 
 ### Widescreen brother windows and GitHub App installation options
 
