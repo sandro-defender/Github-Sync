@@ -1,5 +1,9 @@
 # Changelog
 
+## [0.9.5] - 2026-10-03
+
+- fix: refresh local state after download
+
 ## [0.9.4] - 2026-10-02
 
 - fix: scan explorer folders only when opened
